@@ -1,15 +1,34 @@
 const admin = require('firebase-admin');
 const User = require('../models/User');
 
-// --- INI PERUBAHANNYA ---
-// Inisialisasi Firebase Admin di level atas
-const serviceAccount = require('../config/serviceAccountKey.json');
-if (!admin.apps.length) { // Cek biar gak error "sudah ada"
+let serviceAccount;
+
+try {
+  // --- CARA 1: Coba ambil dari file (Ini akan jalan di LOKAL kamu) ---
+  serviceAccount = require('../config/serviceAccountKey.json');
+  console.log("Firebase Admin: Menggunakan serviceAccountKey.json dari file.");
+  
+} catch (error) {
+  // --- CARA 2: Ambil dari Environment Variable (Ini akan jalan di RAILWAY) ---
+  console.log("File serviceAccountKey.json tidak ditemukan (ini wajar saat deploy), mencoba ambil dari Env Variable...");
+  
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    // Parse string JSON dari Env Var
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    console.log("Firebase Admin: Berhasil load kunci dari Environment Variable.");
+  } else {
+    // Jika di deploy tapi Env Var tidak ada, matikan server
+    console.error("FATAL ERROR: FIREBASE_SERVICE_ACCOUNT_JSON environment variable not set.");
+    process.exit(1); 
+  }
+}
+
+// Inisialisasi Firebase Admin
+if (!admin.apps.length) { 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
 }
-// -------------------------
 
 // Fungsi "find or create"
 exports.findOrCreateUser = async (req, res) => {

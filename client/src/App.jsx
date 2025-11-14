@@ -7,8 +7,11 @@ import LoginPage from './pages/LoginPage';
 import axios from 'axios';
 import { X } from 'lucide-react';
 
-// 1. DEFINISIKAN BASE URL API DARI ENV VARIABLE
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+// 1. DEFINISIKAN BASE URL API
+const rawBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+// 2. 🔥 FIX: Hapus trailing slash (/) jika ada
+const API_BASE_URL = rawBaseUrl.replace(/\/$/, ""); 
+
 
 // --- Halaman Dashboard Utama (SAMA) ---
 const DashboardPage = () => {
@@ -26,7 +29,7 @@ const DashboardPage = () => {
   );
 };
 
-// --- Komponen Dashboard Admin (FIXED) ---
+// --- Komponen Dashboard Admin (SAMA, tapi sekarang pakai API_BASE_URL yang benar) ---
 const AdminDashboard = () => {
   const [roomName, setRoomName] = useState("Setoran Pagi");
   const [targetSurah, setTargetSurah] = useState("Al-Fatihah");
@@ -43,10 +46,8 @@ const AdminDashboard = () => {
       try {
         if (!auth.currentUser) throw new Error("Firebase auth not ready");
         const token = await auth.currentUser.getIdToken(); 
-        
-        // 2. GANTI URL LOCALHOST
         const response = await axios.get(
-          `${API_BASE_URL}/api/rooms/my-rooms`,
+          `${API_BASE_URL}/api/rooms/my-rooms`, // URL sudah benar
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setMyRooms(response.data);
@@ -67,10 +68,8 @@ const AdminDashboard = () => {
     try {
       if (!auth.currentUser) throw new Error("Firebase auth not ready");
       const token = await auth.currentUser.getIdToken(); 
-      
-      // 3. GANTI URL LOCALHOST
       const response = await axios.post(
-        `${API_BASE_URL}/api/rooms/create`,
+        `${API_BASE_URL}/api/rooms/create`, // URL sudah benar
         { roomName, targetSurah },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -90,10 +89,8 @@ const AdminDashboard = () => {
     try {
       if (!auth.currentUser) throw new Error("Firebase auth not ready");
       const token = await auth.currentUser.getIdToken();
-      
-      // 4. GANTI URL LOCALHOST
       await axios.delete(
-        `${API_BASE_URL}/api/rooms/${roomId}`,
+        `${API_BASE_URL}/api/rooms/${roomId}`, // URL sudah benar
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setMyRooms(myRooms.filter(room => room._id !== roomId));
@@ -110,7 +107,6 @@ const AdminDashboard = () => {
       
       {/* Form Create Room (SAMA) */}
       <form className="input-area" onSubmit={handleCreateRoom} style={{flexShrink: 0}}>
-        {/* ... (Isi form sama) ... */}
         <p style={{marginTop: 0, fontWeight: 'bold'}}>Buat Room Baru:</p>
         <input 
           type="text" 
@@ -177,9 +173,8 @@ const SantriDashboard = () => {
         if (!auth.currentUser) throw new Error("Firebase auth not ready");
         const token = await auth.currentUser.getIdToken();
         
-        // 5. GANTI URL LOCALHOST
         const response = await axios.get(
-          `${API_BASE_URL}/api/rooms/all`,
+          `${API_BASE_URL}/api/rooms/all`, // URL sudah benar
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setRooms(response.data);

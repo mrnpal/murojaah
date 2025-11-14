@@ -1,6 +1,6 @@
 const Room = require('../models/Room');
 
-// Data dummy (biarkan)
+// Data dummy
 const DUMMY_AL_FATIHAH_DATA = [
     { number: 1, textArab: "...", textLatin: "Bismillah ir-rahman ir-rahim" },
     { number: 2, textArab: "...", textLatin: "Alhamdu lillahi rabbil alamin" },
@@ -10,19 +10,20 @@ const DUMMY_AL_FATIHAH_DATA = [
     { number: 6, textArab: "...", textLatin: "Ihdinas siratal mustaqim" },
     { number: 7, textArab: "...", textLatin: "Siratal lazina an'amta alaihim ghairil maghdubi alaihim walad dallin" },
 ];
-// Export data dummy (biarkan)
-exports.DUMMY_AL_FATIHAH_DATA = DUMMY_AL_FATIHAH_DATA;
 
-// Fungsi createRoom (biarkan)
+// --- 🔥 FIX DI SINI: Kita EXPORT data dummy-nya 🔥 ---
+exports.DUMMY_AL_FATIHAH_DATA = DUMMY_AL_FATIHAH_DATA;
+// ----------------------------------------------------
+
+// Fungsi createRoom
 exports.createRoom = async (req, res) => {
   const { roomName, targetSurah } = req.body;
   const adminId = req.user._id; 
 
   try {
-    // ... (kode create room yang sudah ada, jangan diubah) ...
     const newRoom = new Room({
       roomId: `ROOM-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
-      roomName: roomName || 'Setoran Room', // Pastikan roomName ada
+      roomName: roomName || 'Setoran Room',
       createdBy: adminId,
       targetSurah: targetSurah,
       targetAyat: { start: 1, end: 7 }, // Sesuaikan
@@ -40,12 +41,10 @@ exports.createRoom = async (req, res) => {
   }
 };
 
-// --- 🔥 FUNGSI BARU DI SINI 🔥 ---
-// Mengambil semua room yang dibuat oleh admin yang sedang login
+// Fungsi getMyRooms
 exports.getMyRooms = async (req, res) => {
   try {
-    // req.user._id didapat dari middleware 'protect'
-    const rooms = await Room.find({ createdBy: req.user._id }).sort({ createdAt: -1 }); // Urutkan dari terbaru
+    const rooms = await Room.find({ createdBy: req.user._id }).sort({ createdAt: -1 });
     res.json(rooms);
   } catch (error) {
     console.error("Get my rooms error:", error);
@@ -53,14 +52,12 @@ exports.getMyRooms = async (req, res) => {
   }
 };
 
-// --- 🔥 FUNGSI BARU UNTUK SANTRI 🔥 ---
+// Fungsi getAllActiveRooms
 exports.getAllActiveRooms = async (req, res) => {
   try {
-    // Kita cari semua room, lalu 'populate' data Ustadz-nya (ambil nama)
-    const rooms = await Room.find({ isActive: true }) // Nanti kita bisa filter yg aktif aja
-      .populate('createdBy', 'username') // Ambil 'username' dari model 'User'
+    const rooms = await Room.find({ isActive: true }) 
+      .populate('createdBy', 'username') 
       .sort({ createdAt: -1 }); 
-      
     res.json(rooms);
   } catch (error) {
     console.error("Get all rooms error:", error);
@@ -68,22 +65,19 @@ exports.getAllActiveRooms = async (req, res) => {
   }
 };
 
+// Fungsi deleteRoom
 exports.deleteRoom = async (req, res) => {
   try {
-    const room = await Room.findById(req.params.id); // req.params.id adalah Mongo _id
+    const room = await Room.findById(req.params.id);
 
     if (!room) {
       return res.status(404).json({ message: 'Room tidak ditemukan' });
     }
-
-    // Keamanan: Pastikan yang mau hapus adalah admin yang BIKIN room itu
     if (room.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Tidak diizinkan menghapus room orang lain' });
     }
-
-    // Hapus room
+    
     await Room.findByIdAndDelete(req.params.id);
-
     res.json({ message: 'Room berhasil dihapus' });
   } catch (error) {
     console.error("Delete room error:", error);

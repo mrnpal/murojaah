@@ -5,70 +5,70 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const CorrectionLog = require('./models/CorrectionLog');
+const Room = require('./models/Room'); // Import Room
+const { koreksiHafalan } = require('./services/aiService');
 
-// Initialize DB
 connectDB();
-
 const app = express();
 const server = http.createServer(app);
 
-// --- 🔥 FIX CORS (BACA ENV VAR) 🔥 ---
-// Daftar origin yang kita izinkan
-const allowedOrigins = [
-  'http://localhost:5173',      // Izin untuk development lokal
-  process.env.FRONTEND_URL    // Izin untuk Vercel (dari Railway Variables)
-];
-
+// --- CORS ---
+const allowedOrigins = [ 'http://localhost:5173', process.env.FRONTEND_URL ];
 const corsOptions = {
   origin: function (origin, callback) {
-    // Izinkan jika origin ada di daftar, atau jika origin undefined (misal: request dari Postman)
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) callback(null, true);
+    else callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
-
-// Pasang CORS untuk semua request API
 app.use(cors(corsOptions));
-// ------------------------------------
-
 app.use(express.json());
 
 // --- ROUTES ---
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/rooms', require('./routes/roomRoutes')); 
+app.get('/', (req, res) => res.send('API Quran Recitation is Running...'));
 
-app.get('/', (req, res) => {
-  res.send('API Quran Recitation is Running...');
-});
-
-// --- 🔥 FIX CORS SOCKET.IO 🔥 ---
+// --- SOCKET.IO ---
 const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins, // Pakai daftar izin yang sama
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: allowedOrigins, methods: ["GET", "POST"] }
 });
-// ----------------------------------
 
 io.on('connection', (socket) => {
   console.log(`User Connected: ${socket.id}`);
 
-  socket.on('join_room', (roomId) => {
-    socket.join(roomId);
-    socket.to(roomId).emit('user_joined', socket.id);
-    console.log(`User ${socket.id} joined room: ${roomId}`);
+  // --- 🔥 PERUBAHAN DI SINI: JOIN ROOM ---
+  socket.on('join_room', async (roomId) => {
+    try {
+      // 1. Cari room di DB
+      const room = await Room.findOne({ roomId: roomId });
+      if (!room) {
+        socket.emit('room_error', 'Room tidak ditemukan');
+        return;
+      }
+      
+      // 2. Masukkan user ke socket room
+      socket.join(roomId);
+      
+      // 3. Kirim data surah ke user yang baru join
+      socket.emit('room_data', { 
+        fullAyatText: room.fullAyatText,
+        targetSurah: room.targetSurah
+      });
+
+      // 4. Beritahu user lain ada yang masuk
+      socket.to(roomId).emit('user_joined', socket.id);
+      console.log(`User ${socket.id} joined room: ${roomId}`);
+
+    } catch (error) {
+      console.error("Join room error:", error);
+      socket.emit('room_error', 'Gagal join room');
+    }
   });
 
   socket.on("callUser", (data) => {
-    io.to(data.userToCall).emit("callUser", { 
-      signal: data.signalData, 
-      from: data.from 
-    });
+    io.to(data.userToCall).emit("callUser", { signal: data.signalData, from: data.from });
   });
 
   socket.on("answerCall", (data) => {
@@ -91,7 +91,6 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('remote_live_transcript', { text });
   });
 
-  // Event baru dari Admin "Ulangi"
   socket.on('admin_force_repeat', ({ roomId, feedback }) => {
     io.to(roomId).emit('res_correction', feedback);
   });
@@ -105,25 +104,22 @@ io.on('connection', (socket) => {
       expectedAyatIndex 
     } = data;
     
-    const { koreksiHafalan } = require('./services/aiService');
-    // NOTE: Ini masih pakai DUMMY, nanti kita harus ambil dari DB
-    const DUMMY_AL_FATIHAH_DATA = require('./controllers/roomController').DUMMY_AL_FATIHAH_DATA; 
-
     try {
-      const fullSurahData = DUMMY_AL_FATIHAH_DATA; 
+      const room = await Room.findOne({ roomId: roomId });
+      if (!room) throw new Error(`Room ${roomId} tidak ditemukan.`);
+      
+      const fullSurahData = room.fullAyatText;
+      if (!fullSurahData) throw new Error(`Data Surah kosong di room ${roomId}.`);
       
       const hasilKoreksi = await koreksiHafalan(
-        userText, 
-        targetAyatText, 
-        expectedAyatIndex,
-        fullSurahData
+        userText, targetAyatText, expectedAyatIndex, fullSurahData
       );
       
       if (userId) {
         const log = new CorrectionLog({
-          room: roomId, 
+          room: room._id, 
           user: userId,
-          surahName: "Al-Fatihah",
+          surahName: room.targetSurah,
           ayahNumber: expectedAyatIndex + 1,
           transcribedText: userText,
           aiFeedback: {
@@ -139,10 +135,10 @@ io.on('connection', (socket) => {
       io.to(roomId).emit('res_correction', hasilKoreksi);
       
     } catch (error) {
-      console.error("AI Service Error:", error);
+      console.error("AI/DB Error:", error.message);
       io.to(roomId).emit('res_correction', { 
         isCorrect: false, 
-        adminMessage: "Gagal memproses di server AI.", 
+        adminMessage: "Gagal memproses (Server Error): " + error.message, 
         santriGuidance: "Error, coba lagi." 
       });
     }
@@ -155,7 +151,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3001;
-// 🔥 FIX BINDING (Agar disukai Render/Railway)
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT} 🚀`);
 });

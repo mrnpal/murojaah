@@ -5,9 +5,12 @@ import { auth } from './firebase';
 import RoomPage from './pages/RoomPage';
 import LoginPage from './pages/LoginPage';
 import axios from 'axios';
-import { X } from 'lucide-react'; // 1. Import Ikon X
+import { X } from 'lucide-react';
 
-// --- DashboardPage (SAMA) ---
+// 1. DEFINISIKAN BASE URL API DARI ENV VARIABLE
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+
+// --- Halaman Dashboard Utama (SAMA) ---
 const DashboardPage = () => {
   const { logout, currentUser } = useAuth();
   const userRole = currentUser.role || 'user'; 
@@ -23,7 +26,7 @@ const DashboardPage = () => {
   );
 };
 
-// --- Komponen Dashboard Admin (UPDATED) ---
+// --- Komponen Dashboard Admin (FIXED) ---
 const AdminDashboard = () => {
   const [roomName, setRoomName] = useState("Setoran Pagi");
   const [targetSurah, setTargetSurah] = useState("Al-Fatihah");
@@ -34,14 +37,16 @@ const AdminDashboard = () => {
   const { currentUser } = useAuth(); 
   const navigate = useNavigate();
 
-  // Fetch rooms (SAMA)
+  // Fetch rooms
   useEffect(() => {
     const fetchMyRooms = async () => {
       try {
         if (!auth.currentUser) throw new Error("Firebase auth not ready");
         const token = await auth.currentUser.getIdToken(); 
+        
+        // 2. GANTI URL LOCALHOST
         const response = await axios.get(
-          'http://localhost:3001/api/rooms/my-rooms',
+          `${API_BASE_URL}/api/rooms/my-rooms`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setMyRooms(response.data);
@@ -54,7 +59,7 @@ const AdminDashboard = () => {
     if (currentUser) { fetchMyRooms(); }
   }, [currentUser]);
 
-  // Create room (SAMA)
+  // Create room
   const handleCreateRoom = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -62,8 +67,10 @@ const AdminDashboard = () => {
     try {
       if (!auth.currentUser) throw new Error("Firebase auth not ready");
       const token = await auth.currentUser.getIdToken(); 
+      
+      // 3. GANTI URL LOCALHOST
       const response = await axios.post(
-        'http://localhost:3001/api/rooms/create',
+        `${API_BASE_URL}/api/rooms/create`,
         { roomName, targetSurah },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -77,28 +84,20 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- 🔥 FUNGSI BARU UNTUK DELETE ROOM (FRONTEND) 🔥 ---
+  // Delete room
   const handleDeleteRoom = async (roomId) => {
-    // Konfirmasi dulu
-    if (!window.confirm("Yakin mau hapus room ini? Data hafalan terkait akan hilang.")) {
-      return;
-    }
-
+    if (!window.confirm("Yakin mau hapus room ini?")) return;
     try {
       if (!auth.currentUser) throw new Error("Firebase auth not ready");
       const token = await auth.currentUser.getIdToken();
-
-      // Panggil API DELETE
+      
+      // 4. GANTI URL LOCALHOST
       await axios.delete(
-        `http://localhost:3001/api/rooms/${roomId}`, // Kirim Mongo _id
+        `${API_BASE_URL}/api/rooms/${roomId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      
-      // Update UI: Hapus room dari state 'myRooms'
       setMyRooms(myRooms.filter(room => room._id !== roomId));
-
     } catch (err) {
-      console.error("Gagal hapus room:", err);
       setError(err.response?.data?.message || "Gagal menghapus room.");
     }
   };
@@ -135,7 +134,7 @@ const AdminDashboard = () => {
         {error && <p style={{color: '#da373c', fontSize: 12, textAlign: 'center'}}>{error}</p>}
       </form>
       
-      {/* --- TAMPILAN DAFTAR ROOM (UPDATED) --- */}
+      {/* Daftar Room (SAMA) */}
       <div className="sidebar-content" style={{borderTop: '1px solid #1f2023', marginTop: 10}}>
         <h3 style={{fontWeight: 'bold', color: '#dbdee1', fontSize: 14, margin: 0, marginBottom: 10}}>Room yang Sudah Dibuat:</h3>
         {loadingRooms ? (
@@ -145,28 +144,16 @@ const AdminDashboard = () => {
             <p style={{color: '#949ba4', fontSize: 12}}>Belum ada room dibuat.</p>
           ) : (
             myRooms.map(room => (
-              // Kita bungkus Link dan Tombol Hapus
               <div key={room._id} style={{display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'center'}}>
-                {/* Tombol Masuk (Link) */}
                 <Link 
                   to={`/room/${room.roomId}?role=admin`} 
                   className="send-btn"
-                  style={{
-                    background: '#5865f2', textDecoration: 'none',
-                    textAlign: 'center', flex: 1, // Bikin dia memanjang
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                  }}
+                  style={{ background: '#5865f2', textDecoration: 'none', textAlign: 'center', flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                 >
                   <span>{room.roomName || room.roomId}</span>
                   <span style={{fontSize: 11, background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: 4}}>{room.targetSurah}</span>
                 </Link>
-                {/* Tombol Hapus (Button) */}
-                <button 
-                  onClick={() => handleDeleteRoom(room._id)} 
-                  className="dock-btn active" // Pinjam style dock-btn
-                  title="Hapus Room"
-                  style={{width: 44, height: 44, borderRadius: 8}}
-                >
+                <button onClick={() => handleDeleteRoom(room._id)} className="dock-btn active" title="Hapus Room" style={{width: 44, height: 44, borderRadius: 8}}>
                   <X size={20} />
                 </button>
               </div>
@@ -178,7 +165,7 @@ const AdminDashboard = () => {
   );
 };
 
-// --- Komponen Dashboard Santri (SAMA) ---
+// --- Komponen Dashboard Santri (FIXED) ---
 const SantriDashboard = () => {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -189,8 +176,10 @@ const SantriDashboard = () => {
       try {
         if (!auth.currentUser) throw new Error("Firebase auth not ready");
         const token = await auth.currentUser.getIdToken();
+        
+        // 5. GANTI URL LOCALHOST
         const response = await axios.get(
-          'http://localhost:3001/api/rooms/all',
+          `${API_BASE_URL}/api/rooms/all`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setRooms(response.data);
@@ -222,11 +211,7 @@ const SantriDashboard = () => {
               to={`/room/${room.roomId}?role=user`} 
               key={room._id}
               className="send-btn"
-              style={{
-                background: '#4e5058', textDecoration: 'none',
-                marginBottom: '10px', textAlign: 'left',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-              }}
+              style={{ background: '#4e5058', textDecoration: 'none', marginBottom: '10px', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
             >
               <div>
                 <span style={{color: 'white', fontWeight:'bold'}}>{room.roomName || room.roomId}</span>

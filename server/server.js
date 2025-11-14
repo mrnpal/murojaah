@@ -14,7 +14,8 @@ const server = http.createServer(app);
 
 // --- MIDDLEWARE (CORS, JSON) ---
 const corsOptions = {
-  origin: 'http://localhost:5173', 
+  // Izinkan localhost (buat development) DAN URL Vercel-mu nanti
+  origin: [process.env.FRONTEND_URL, 'http://localhost:5173'], 
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };

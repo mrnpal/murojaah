@@ -11,7 +11,7 @@ import axios from 'axios'; // 1. Import axios
 const AuthContext = React.createContext();
 
 // Alamat API Backend
-const API_URL = 'http://localhost:3001/api/auth';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/auth';
 
 export function useAuth() {
   return useContext(AuthContext);

@@ -46,7 +46,7 @@ const AdminDashboard = () => {
         
         // 2. GANTI URL LOCALHOST
         const response = await axios.get(
-          `${API_BASE_URL}/api/rooms/my-rooms`,
+          `${API_BASE_URL}api/rooms/my-rooms`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setMyRooms(response.data);

@@ -1,27 +1,34 @@
-const axios = require('axios'); // 1. Import axios
+const axios = require('axios'); // Pastikan axios sudah terinstall di server (npm install axios)
 const Room = require('../models/Room');
 
-// --- 🔥 DATA DUMMY SUDAH DIHAPUS 🔥 ---
-
-// --- FUNGSI BARU: Fetch data surah dari API publik ---
+// --- 🔥 FUNGSI BARU: Fetch data surah dari API publik ---
 const fetchSurahData = async (surahNumber) => {
   try {
-    // Kita ambil data teks 'imlaei' (standar) dari quran.com
-    const response = await axios.get(`https://api.quran.com/api/v4/quran/verses/imlaei?chapter_number=${surahNumber}`);
+    console.log(`Fetching data untuk Surah #${surahNumber}...`);
     
-    // Format data API agar sesuai dengan Schema 'fullAyatText' kita
-    const verses = response.data.verses;
-    const formattedData = verses.map(verse => {
-      // Ekstrak nomor ayat dari 'verse_key', misal "1:5" -> 5
+    // 1. Ambil Teks Arab (Imlaei)
+    const arabicResponse = await axios.get(`https://api.quran.com/api/v4/quran/verses/imlaei?chapter_number=${surahNumber}`);
+    const arabicVerses = arabicResponse.data.verses;
+
+    // 2. Ambil Teks Latin (Transliterasi)
+    const latinResponse = await axios.get(`https://api.quran.com/api/v4/quran/verses/transliteration?chapter_number=${surahNumber}&language=en`);
+    const latinVerses = latinResponse.data.verses;
+
+    // 3. Gabungkan datanya
+    const formattedData = arabicVerses.map((verse, index) => {
       const ayatNumber = parseInt(verse.verse_key.split(':')[1]);
+      
+      // Pastikan data latin-nya sinkron
+      const latinText = latinVerses[index] ? latinVerses[index].text_transliteration : `Ayat ${ayatNumber}`;
       
       return {
         number: ayatNumber,
-        textArab: verse.text_imlaei, // Teks Arab asli
-        textLatin: `Ayat ${ayatNumber}` // Kita gak punya data latin, jadi pakai placeholder
+        textArab: verse.text_imlaei, // Teks Arab untuk Ustadz
+        textLatin: latinText        // Teks Latin untuk AI
       };
     });
     
+    console.log(`Fetch sukses, total ${formattedData.length} ayat.`);
     return formattedData;
     
   } catch (error) {
@@ -33,22 +40,21 @@ const fetchSurahData = async (surahNumber) => {
 
 // --- FUNGSI CREATE ROOM (DI-UPGRADE) ---
 exports.createRoom = async (req, res) => {
-  const { roomName, targetSurah } = req.body;
+  // Sekarang kita terima 'surahNumber' (misal "1" atau "114")
+  const { roomName, surahNumber } = req.body; 
   const adminId = req.user._id; 
 
   try {
-    // 2. Terjemahkan nama surah (dari dropdown) ke nomor
-    // Nanti kita akan ganti ini pakai Surah ID (1-114)
-    let surahNumber;
-    if (targetSurah === 'Al-Fatihah') {
-      surahNumber = 1;
-    } else {
-      // TODO: Tambahkan surah lain
-      surahNumber = 1; // Default
+    if (!roomName || !surahNumber) {
+      return res.status(400).json({ message: 'Nama Room dan Surah wajib diisi' });
     }
 
-    // 3. Ambil data ayat ASLI dari API
+    // 1. Ambil data ayat ASLI dari API
     const ayatData = await fetchSurahData(surahNumber);
+    
+    // Ambil nama Surah dari API (opsional tapi bagus)
+    const surahInfo = await axios.get(`https://api.quran.com/api/v4/chapters/${surahNumber}?language=id`);
+    const targetSurah = surahInfo.data.chapter.name_simple;
 
     const newRoom = new Room({
       roomId: `ROOM-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
@@ -59,7 +65,7 @@ exports.createRoom = async (req, res) => {
         start: 1,
         end: ayatData.length
       },
-      fullAyatText: ayatData // 4. Simpan data ASLI ke DB
+      fullAyatText: ayatData // 2. Simpan data ASLI ke DB
     });
     
     await newRoom.save();

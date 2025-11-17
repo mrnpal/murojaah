@@ -4,19 +4,10 @@ import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognitio
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
 import Peer from 'simple-peer';
-import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X } from 'lucide-react'; 
+import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2 } from 'lucide-react'; 
 import './RoomPage.css';
 
-// --- DATA SURAT (SAMA) ---
-const SURAH_DATA = [
-  { id: 1, text: "Bismillah ir-rahman ir-rahim" },
-  { id: 2, text: "Alhamdu lillahi rabbil alamin" },
-  { id: 3, text: "Ar rahman ir rahim" },
-  { id: 4, text: "Maliki yaumid din" },
-  { id: 5, text: "Iyyaka na'budu wa iyyaka nasta'in" },
-  { id: 6, text: "Ihdinas siratal mustaqim" },
-  { id: 7, text: "Siratal lazina an'amta alaihim ghairil maghdubi alaihim walad dallin" },
-];
+// --- 🔥 DATA DUMMY (SURAH_DATA) SUDAH TIDAK DIPAKAI LAGI ---
 
 const RoomPage = () => {
   const { roomId } = useParams();
@@ -28,6 +19,9 @@ const RoomPage = () => {
   const { transcript, listening, resetTranscript, browserSupportsSpeechRecognition } = useSpeechRecognition();
 
   // --- STATE ---
+  const [surahData, setSurahData] = useState([]); // 🔥 Pakai state, bukan data dummy
+  const [isLoadingData, setIsLoadingData] = useState(true); 
+
   const [currentIndex, setCurrentIndex] = useState(0); 
   const [isFinished, setIsFinished] = useState(false); 
   const [aiFeedback, setAiFeedback] = useState(null);
@@ -47,7 +41,7 @@ const RoomPage = () => {
   const connectionRef = useRef();
   const streamRef = useRef();
 
-  // --- (LOGIKA useEffect SAMA SEMUA, TIDAK BERUBAH) ---
+  // --- (LOGIKA useEffect SAMA SEMUA, SUDAH BENAR) ---
   useEffect(() => {
     if (role === 'user' && listening && transcript && !isProcessing) {
       const silenceTimer = setTimeout(() => handleKoreksi(transcript), 1500); 
@@ -74,14 +68,14 @@ const RoomPage = () => {
     if (socket) {
       socket.on('sync_ayat_index', (newIndex) => {
         setCurrentIndex(newIndex);
-        if (newIndex >= SURAH_DATA.length) setIsFinished(true);
+        if (surahData.length > 0 && newIndex >= surahData.length) setIsFinished(true); // Pakai surahData.length
         else setIsFinished(false);
         setAiFeedback(null);
         if (role === 'user') resetTranscript();
       });
       return () => socket.off('sync_ayat_index');
     }
-  }, [socket, role, resetTranscript]);
+  }, [socket, role, resetTranscript, surahData]); // Tambah dependency surahData
 
   useEffect(() => {
     if (aiFeedback && !aiFeedback.isCorrect) {
@@ -89,6 +83,7 @@ const RoomPage = () => {
     }
   }, [aiFeedback]);
 
+  // --- SETUP SOCKET & PEER (Pakai data asli) ---
   useEffect(() => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((currentStream) => {
         setStream(currentStream);
@@ -96,15 +91,39 @@ const RoomPage = () => {
         if (myVideo.current) myVideo.current.srcObject = currentStream;
         setupSocketListeners(currentStream);
       }).catch(err => console.error("Gagal akses kamera:", err));
-    return () => { if (socket) { /* ... cleanup listeners ... */ } };
+    
+    return () => { 
+      if (socket) { 
+        socket.off('user_joined'); socket.off('callUser'); socket.off('callAccepted'); 
+        socket.off('res_correction'); socket.off('remote_camera_status'); socket.off('remote_mic_status'); 
+        socket.off('sync_ayat_index');
+        socket.off('room_data'); // Wajib
+        socket.off('room_error'); // Wajib
+      } 
+    };
   }, [socket, roomId]);
 
   const setupSocketListeners = (currentStream) => {
     if (!socket) return;
+    
     socket.off('user_joined'); socket.off('callUser'); socket.off('callAccepted'); 
     socket.off('res_correction'); socket.off('remote_camera_status'); socket.off('remote_mic_status');
     socket.off('sync_ayat_index');
+    socket.off('room_data');
+    socket.off('room_error');
+
+    // 🔥 Terima data surah asli dari server
+    socket.on('room_data', (data) => {
+      console.log("Menerima data surah:", data.fullAyatText);
+      setSurahData(data.fullAyatText);
+      setIsLoadingData(false);
+    });
     
+    socket.on('room_error', (message) => {
+      alert(`Error: ${message}`);
+      setIsLoadingData(false);
+    });
+
     socket.emit('join_room', roomId);
     socket.emit('camera_status', { roomId, status: true });
     socket.emit('mic_status', { roomId, status: true });
@@ -115,13 +134,6 @@ const RoomPage = () => {
     socket.on('res_correction', (data) => { setAiFeedback(data); setIsProcessing(false); });
     socket.on('remote_camera_status', ({ status }) => setIsRemoteCameraOn(status));
     socket.on('remote_mic_status', ({ status }) => setIsRemoteMicOn(status));
-    socket.on('sync_ayat_index', (newIndex) => {
-        setCurrentIndex(newIndex);
-        if (newIndex >= SURAH_DATA.length) setIsFinished(true);
-        else setIsFinished(false);
-        setAiFeedback(null);
-        if (role === 'user') resetTranscript();
-      });
   };
 
   const callUser = (id, stream) => {
@@ -155,24 +167,37 @@ const RoomPage = () => {
     }
   };
 
+  // --- HANDLE KOREKSI (Pakai textLatin dari surahData) ---
   const handleKoreksi = (textOverride) => {
     if (role !== 'user') return;
     const textToSend = (typeof textOverride === 'string' && textOverride) ? textOverride : transcript;
-    if (!textToSend) return;
+    if (!textToSend || surahData.length === 0) return;
+
     setIsProcessing(true); setAiFeedback(null);
     SpeechRecognition.stopListening(); 
-    if (!SURAH_DATA[currentIndex]) return;
-    const currentTarget = SURAH_DATA[currentIndex].text;
-    socket.emit('req_correction', { roomId, userId: currentUser._id, userText: textToSend, targetAyatText: currentTarget, expectedAyatIndex: currentIndex, fullSurahData: SURAH_DATA });
+    
+    if (!surahData[currentIndex]) return; 
+    
+    const currentTarget = surahData[currentIndex].textLatin;
+    
+    socket.emit('req_correction', { 
+      roomId, 
+      userId: currentUser._id, 
+      userText: textToSend, 
+      targetAyatText: currentTarget,
+      expectedAyatIndex: currentIndex 
+      // Gak perlu kirim fullSurahData, server udah ambil dari DB
+    });
   };
   
-  // --- KONTROL ADMIN (Loloskan / Ulangi) ---
+  // --- KONTROL ADMIN (Pakai surahData.length) ---
   const handleAdminNav = (direction) => {
+    if (surahData.length === 0) return;
     let newIndex = currentIndex + direction;
     if (newIndex < 0) newIndex = 0;
-    if (newIndex >= SURAH_DATA.length) newIndex = SURAH_DATA.length; 
+    if (newIndex >= surahData.length) newIndex = surahData.length; 
     
-    if (direction > 0 && newIndex <= SURAH_DATA.length) {
+    if (direction > 0 && newIndex <= surahData.length) {
       setScore(s => ({ ...s, correct: s.correct + 1 }));
       if(aiFeedback && !aiFeedback.isCorrect) {
         setScore(s => ({ ...s, incorrect: Math.max(0, s.incorrect - 1) }));
@@ -181,10 +206,8 @@ const RoomPage = () => {
     socket.emit('admin_change_ayat', { roomId, newIndex });
   };
   
-  // 🔥 FIX BUG (io.to -> socket.emit)
   const handleAdminUlangi = () => {
     setScore(s => ({ ...s, incorrect: s.incorrect + 1 }));
-    // Kirim event baru ke server, biar server yang broadcast
     socket.emit('admin_force_repeat', { 
       roomId, 
       feedback: {
@@ -195,7 +218,15 @@ const RoomPage = () => {
     });
   };
 
-  if (!browserSupportsSpeechRecognition) return <div>No STT Support</div>;
+  // --- RENDER ---
+  if (isLoadingData) {
+    return (
+      <div className="discord-container" style={{justifyContent:'center', alignItems:'center', color:'white'}}>
+        <Loader2 className="animate-spin" size={48} />
+        <h2 style={{color: '#949ba4', marginTop: 20}}>Menghubungkan & Mengambil Data Surah...</h2>
+      </div>
+    );
+  }
 
   return (
     <div className="discord-container">
@@ -203,7 +234,7 @@ const RoomPage = () => {
       {/* 1. MAIN STREAM AREA (KIRI) */}
       <div className="stream-area">
         
-        {/* 🔥 FIX: KODE VIDEO YANG HILANG SAYA KEMBALIKAN 🔥 */}
+        {/* KODE VIDEO YANG BENAR (DENGAN ANIMASI) */}
         <div className="video-grid">
           
           {/* --- VIDEO LAWAN (ANIMATED) --- */}
@@ -259,8 +290,6 @@ const RoomPage = () => {
           </div>
 
         </div>
-        {/* 🔥 BATAS KODE YANG HILANG 🔥 */}
-
 
         {/* 2. FLOATING CONTROLS (SAMA) */}
         <div className="control-dock">
@@ -285,7 +314,7 @@ const RoomPage = () => {
         </div>
       </div>
 
-      {/* 3. RIGHT SIDEBAR (DENGAN KONTROL ADMIN) */}
+      {/* 3. RIGHT SIDEBAR (Pakai surahData) */}
       <div className="sidebar-panel">
         <div className="sidebar-header">
            <div className="channel-name"><Hash size={20} color="#949ba4"/> setoran-hafalan</div>
@@ -296,19 +325,14 @@ const RoomPage = () => {
 
         <div className="sidebar-content">
           
-          {/* Panel Target Ayat */}
+          {/* Panel Target Ayat (Pakai surahData) */}
           <div className="target-msg">
              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-               <div className="msg-label">Target Ayat ({currentIndex + 1 > SURAH_DATA.length ? "Selesai" : `${currentIndex + 1}/${SURAH_DATA.length}`})</div>
-               {/* Navigasi Ayat (Hanya Admin) */}
+               <div className="msg-label">Target Ayat ({currentIndex + 1 > surahData.length ? "Selesai" : `${currentIndex + 1}/${surahData.length}`})</div>
                {role === 'admin' && (
                  <div style={{display:'flex', gap:'5px'}}>
-                   <button onClick={() => handleAdminNav(-1)} disabled={currentIndex <= 0} className="nav-btn">
-                     <ChevronLeft size={16} />
-                   </button>
-                   <button onClick={() => handleAdminNav(1)} disabled={isFinished} className="nav-btn">
-                     <ChevronRight size={16} />
-                   </button>
+                   <button onClick={() => handleAdminNav(-1)} disabled={currentIndex <= 0} className="nav-btn"><ChevronLeft size={16} /></button>
+                   <button onClick={() => handleAdminNav(1)} disabled={isFinished} className="nav-btn"><ChevronRight size={16} /></button>
                  </div>
                )}
              </div>
@@ -318,12 +342,16 @@ const RoomPage = () => {
                  "Shadaqallahul 'adzim"
                ) : (
                  role === 'admin' ? (
-                   <span style={{fontSize:'18px', fontWeight:'bold', display:'block', marginTop:'5px'}}>
-                     {SURAH_DATA[currentIndex]?.text || "Selesai"}
+                   // ADMIN (Lihat Teks Arab Asli)
+                   <span style={{fontSize:'24px', fontWeight:'bold', display:'block', marginTop:'5px', fontFamily:'Arial, sans-serif', direction: 'rtl'}}>
+                     {surahData[currentIndex]?.textArab || "Selesai"}
                    </span>
                  ) : (
+                   // USER (Lihat Teks Blur)
                    <div style={{background:'#1e1f22', padding:'15px', borderRadius:'8px', textAlign:'center', border:'1px dashed #4e5058', marginTop:'5px'}}>
-                      <div style={{filter:'blur(4px)', opacity:0.4, marginBottom:'5px'}}>بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ</div>
+                      <div style={{filter:'blur(4px)', opacity:0.4, marginBottom:'5px', fontSize: 20, direction: 'rtl'}}>
+                        {surahData[currentIndex]?.textArab}
+                      </div>
                       <span style={{fontSize:'12px', color:'#949ba4', fontStyle:'italic'}}>(Bacakan Ayat ke-{currentIndex + 1})</span>
                    </div>
                  )
@@ -331,7 +359,7 @@ const RoomPage = () => {
              </div>
           </div>
           
-          {/* Panel Admin: Skor & Override */}
+          {/* Panel Admin: Skor & Override (SAMA) */}
           {role === 'admin' && (
             <div className="admin-controls">
               <div className="scorecard">
@@ -355,7 +383,7 @@ const RoomPage = () => {
              AI Assistant
           </div>
 
-          {/* AI Feedback */}
+          {/* AI Feedback (SAMA) */}
           {isProcessing && (
             <div className="chat-bubble">
               <div className="bot-avatar"><Activity size={16} color="white"/></div>
@@ -385,7 +413,7 @@ const RoomPage = () => {
           )}
         </div>
 
-        {/* INPUT AREA (User Disederhanakan) */}
+        {/* INPUT AREA (SAMA) */}
         <div className="input-area">
            {role === 'user' ? (
              <>

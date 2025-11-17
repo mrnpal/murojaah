@@ -1,17 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react'; // 1. Import useEffect
 import { Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { auth } from './firebase'; 
 import RoomPage from './pages/RoomPage';
 import LoginPage from './pages/LoginPage';
 import axios from 'axios';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react'; // Import Loader
 
-// 1. DEFINISIKAN BASE URL API
+// 1. DEFINISIKAN BASE URL API (UDAH BENER)
 const rawBaseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
-// 2. 🔥 FIX: Hapus trailing slash (/) jika ada
 const API_BASE_URL = rawBaseUrl.replace(/\/$/, ""); 
-
 
 // --- Halaman Dashboard Utama (SAMA) ---
 const DashboardPage = () => {
@@ -29,16 +27,37 @@ const DashboardPage = () => {
   );
 };
 
-// --- Komponen Dashboard Admin (SAMA, tapi sekarang pakai API_BASE_URL yang benar) ---
+// --- Komponen Dashboard Admin (UPDATED) ---
 const AdminDashboard = () => {
+  // State untuk form
   const [roomName, setRoomName] = useState("Setoran Pagi");
-  const [targetSurah, setTargetSurah] = useState("Al-Fatihah");
+  const [surahNumber, setSurahNumber] = useState("1"); // 🔥 Ganti ke Nomor Surah
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  
+  // State untuk data
   const [myRooms, setMyRooms] = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
+  const [surahList, setSurahList] = useState([]); // 🔥 Daftar surah
+  const [loadingSurahs, setLoadingSurahs] = useState(true);
+
   const { currentUser } = useAuth(); 
   const navigate = useNavigate();
+
+  // --- 🔥 Fetch Daftar Surah (BARU) ---
+  useEffect(() => {
+    const fetchSurahList = async () => {
+      try {
+        const response = await axios.get('https://api.quran.com/api/v4/chapters?language=id');
+        setSurahList(response.data.chapters);
+        setLoadingSurahs(false);
+      } catch (err) {
+        setError("Gagal memuat daftar surah.");
+        setLoadingSurahs(false);
+      }
+    };
+    fetchSurahList();
+  }, []);
 
   // Fetch rooms
   useEffect(() => {
@@ -46,8 +65,10 @@ const AdminDashboard = () => {
       try {
         if (!auth.currentUser) throw new Error("Firebase auth not ready");
         const token = await auth.currentUser.getIdToken(); 
+        
+        // 🔥 FIX: Pakai API_BASE_URL
         const response = await axios.get(
-          `${API_BASE_URL}/api/rooms/my-rooms`, // URL sudah benar
+          `${API_BASE_URL}/api/rooms/my-rooms`, 
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setMyRooms(response.data);
@@ -68,9 +89,11 @@ const AdminDashboard = () => {
     try {
       if (!auth.currentUser) throw new Error("Firebase auth not ready");
       const token = await auth.currentUser.getIdToken(); 
+      
+      // 🔥 FIX: Pakai API_BASE_URL dan kirim 'surahNumber'
       const response = await axios.post(
-        `${API_BASE_URL}/api/rooms/create`, // URL sudah benar
-        { roomName, targetSurah },
+        `${API_BASE_URL}/api/rooms/create`, 
+        { roomName, surahNumber }, // Kirim nomor
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setLoading(false);
@@ -89,8 +112,10 @@ const AdminDashboard = () => {
     try {
       if (!auth.currentUser) throw new Error("Firebase auth not ready");
       const token = await auth.currentUser.getIdToken();
+      
+      // 🔥 FIX: Pakai API_BASE_URL
       await axios.delete(
-        `${API_BASE_URL}/api/rooms/${roomId}`, // URL sudah benar
+        `${API_BASE_URL}/api/rooms/${roomId}`, 
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setMyRooms(myRooms.filter(room => room._id !== roomId));
@@ -105,7 +130,7 @@ const AdminDashboard = () => {
         <h2 style={{ color: '#da373c' }}>Mode Ustadz (Admin)</h2>
       </div>
       
-      {/* Form Create Room (SAMA) */}
+      {/* Form Create Room (UPDATED) */}
       <form className="input-area" onSubmit={handleCreateRoom} style={{flexShrink: 0}}>
         <p style={{marginTop: 0, fontWeight: 'bold'}}>Buat Room Baru:</p>
         <input 
@@ -116,15 +141,28 @@ const AdminDashboard = () => {
           onChange={(e) => setRoomName(e.target.value)}
           required
         />
+        
+        {/* 🔥 Dropdown Surah Asli (BARU) */}
+        <label style={{fontSize: 12, color: '#949ba4', marginTop: 10}}>Target Surah</label>
         <select 
           className="transcript-input"
-          style={{background: '#1e1f22', color: 'white', border: 'none', width: '100%', marginTop: 10}}
-          value={targetSurah}
-          onChange={(e) => setTargetSurah(e.target.value)}
+          style={{background: '#1e1f22', color: 'white', border: 'none', width: '100%'}}
+          value={surahNumber}
+          onChange={(e) => setSurahNumber(e.target.value)}
+          disabled={loadingSurahs}
         >
-          <option value="Al-Fatihah">Al-Fatihah</option>
+          {loadingSurahs ? (
+            <option>Memuat surah...</option>
+          ) : (
+            surahList.map(surah => (
+              <option key={surah.id} value={surah.id}>
+                {surah.id}. {surah.name_simple} ({surah.translated_name.name})
+              </option>
+            ))
+          )}
         </select>
-        <button type="submit" className="send-btn" style={{ background: '#23a559', marginTop: 15 }} disabled={loading}>
+        
+        <button type="submit" className="send-btn" style={{ background: '#23a559', marginTop: 15 }} disabled={loading || loadingSurahs}>
           {loading ? 'Membuat...' : '+ Buat Room Baru'}
         </button>
         {error && <p style={{color: '#da373c', fontSize: 12, textAlign: 'center'}}>{error}</p>}
@@ -136,25 +174,15 @@ const AdminDashboard = () => {
         {loadingRooms ? (
           <p style={{color: '#949ba4', fontSize: 12}}>Memuat room...</p>
         ) : (
-          myRooms.length === 0 ? (
-            <p style={{color: '#949ba4', fontSize: 12}}>Belum ada room dibuat.</p>
-          ) : (
-            myRooms.map(room => (
-              <div key={room._id} style={{display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'center'}}>
-                <Link 
-                  to={`/room/${room.roomId}?role=admin`} 
-                  className="send-btn"
-                  style={{ background: '#5865f2', textDecoration: 'none', textAlign: 'center', flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                >
-                  <span>{room.roomName || room.roomId}</span>
-                  <span style={{fontSize: 11, background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: 4}}>{room.targetSurah}</span>
-                </Link>
-                <button onClick={() => handleDeleteRoom(room._id)} className="dock-btn active" title="Hapus Room" style={{width: 44, height: 44, borderRadius: 8}}>
-                  <X size={20} />
-                </button>
-              </div>
-            ))
-          )
+          myRooms.map(room => (
+            <div key={room._id} style={{display: 'flex', gap: '8px', marginBottom: '10px', alignItems: 'center'}}>
+              <Link to={`/room/${room.roomId}?role=admin`} className="send-btn" style={{ background: '#5865f2', textDecoration: 'none', textAlign: 'center', flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{room.roomName || room.roomId}</span>
+                <span style={{fontSize: 11, background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: 4}}>{room.targetSurah}</span>
+              </Link>
+              <button onClick={() => handleDeleteRoom(room._id)} className="dock-btn active" title="Hapus Room" style={{width: 44, height: 44, borderRadius: 8}}><X size={20} /></button>
+            </div>
+          ))
         )}
       </div>
     </div>
@@ -173,8 +201,9 @@ const SantriDashboard = () => {
         if (!auth.currentUser) throw new Error("Firebase auth not ready");
         const token = await auth.currentUser.getIdToken();
         
+        // 🔥 FIX: Pakai API_BASE_URL
         const response = await axios.get(
-          `${API_BASE_URL}/api/rooms/all`, // URL sudah benar
+          `${API_BASE_URL}/api/rooms/all`, 
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setRooms(response.data);

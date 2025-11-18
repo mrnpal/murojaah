@@ -67,6 +67,11 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('admin_toggle_reveal', ({ roomId, isRevealed }) => {
+    // Broadcast status 'terbuka/tertutup' ke semua orang di room
+    io.to(roomId).emit('sync_ayat_reveal', isRevealed);
+  });
+
   socket.on("callUser", (data) => {
     io.to(data.userToCall).emit("callUser", { signal: data.signalData, from: data.from });
   });

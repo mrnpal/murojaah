@@ -94,13 +94,13 @@ const RoomPage = () => {
     return () => { if (socket) { /* cleanup */ } };
   }, [socket, roomId]);
 
+  // --- SETUP SOCKET LISTENERS (BARU) ---
   const setupSocketListeners = (currentStream) => {
     if (!socket) return;
     
     // Reset listeners
     socket.off('user_joined'); socket.off('callUser'); socket.off('callAccepted'); 
     socket.off('res_correction'); socket.off('remote_camera_status'); socket.off('remote_mic_status');
-    socket.off('sync_ayat_index'); socket.off('sync_ayat_reveal');
     socket.off('room_data'); socket.off('room_error');
 
     socket.on('room_data', (data) => {
@@ -113,8 +113,14 @@ const RoomPage = () => {
     socket.emit('camera_status', { roomId, status: true });
     socket.emit('mic_status', { roomId, status: true });
 
-    socket.on('user_joined', (userId) => callUser(userId, currentStream));
-    socket.on("callUser", (data) => answerCall(data, currentStream));
+    // 🔥 FIX UTAMA: KASIH JEDA 500ms (Anti Race Condition)
+    socket.on('user_joined', (userId) => {
+        setTimeout(() => { callUser(userId, currentStream); }, 500); 
+    });
+    socket.on("callUser", (data) => {
+        setTimeout(() => { answerCall(data, currentStream); }, 500);
+    });
+    
     socket.on("callAccepted", (signal) => { setCallAccepted(true); connectionRef.current.signal(signal); });
     socket.on('res_correction', (data) => { setAiFeedback(data); setIsProcessing(false); });
     socket.on('remote_camera_status', ({ status }) => setIsRemoteCameraOn(status));

@@ -38,26 +38,23 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
   console.log(`User Connected: ${socket.id}`);
 
-  // --- 🔥 PERUBAHAN DI SINI: JOIN ROOM ---
+  // 1. JOIN ROOM
   socket.on('join_room', async (roomId) => {
     try {
-      // 1. Cari room di DB
       const room = await Room.findOne({ roomId: roomId });
       if (!room) {
         socket.emit('room_error', 'Room tidak ditemukan');
         return;
       }
       
-      // 2. Masukkan user ke socket room
       socket.join(roomId);
       
-      // 3. Kirim data surah ke user yang baru join
+      // Kirim data surah ke user yang baru join
       socket.emit('room_data', { 
         fullAyatText: room.fullAyatText,
         targetSurah: room.targetSurah
       });
 
-      // 4. Beritahu user lain ada yang masuk
       socket.to(roomId).emit('user_joined', socket.id);
       console.log(`User ${socket.id} joined room: ${roomId}`);
 
@@ -67,47 +64,34 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 2. TOGGLE REVEAL (PENTING: Ini yang hilang!)
   socket.on('admin_toggle_reveal', ({ roomId, isRevealed }) => {
     // Broadcast status 'terbuka/tertutup' ke semua orang di room
     io.to(roomId).emit('sync_ayat_reveal', isRevealed);
   });
 
-  socket.on("callUser", (data) => {
-    io.to(data.userToCall).emit("callUser", { signal: data.signalData, from: data.from });
-  });
+  // 3. WebRTC & Toggles
+  socket.on("callUser", (data) => { io.to(data.userToCall).emit("callUser", { signal: data.signalData, from: data.from }); });
+  socket.on("answerCall", (data) => { io.to(data.to).emit("callAccepted", data.signal); });
+  socket.on('camera_status', ({ roomId, status }) => { socket.to(roomId).emit('remote_camera_status', { status }); });
+  socket.on('mic_status', ({ roomId, status }) => { socket.to(roomId).emit('remote_mic_status', { status }); });
 
-  socket.on("answerCall", (data) => {
-    io.to(data.to).emit("callAccepted", data.signal);
-  });
-  
-  socket.on('camera_status', ({ roomId, status }) => {
-    socket.to(roomId).emit('remote_camera_status', { status });
-  });
-
-  socket.on('mic_status', ({ roomId, status }) => {
-    socket.to(roomId).emit('remote_mic_status', { status });
-  });
-
+  // 4. Admin Controls
   socket.on('admin_change_ayat', ({ roomId, newIndex }) => {
     io.to(roomId).emit('sync_ayat_index', newIndex);
   });
-
-  socket.on('live_transcript', ({ roomId, text }) => {
-    socket.to(roomId).emit('remote_live_transcript', { text });
-  });
-
   socket.on('admin_force_repeat', ({ roomId, feedback }) => {
     io.to(roomId).emit('res_correction', feedback);
   });
 
+  // 5. Live Transcript
+  socket.on('live_transcript', ({ roomId, text }) => {
+    socket.to(roomId).emit('remote_live_transcript', { text });
+  });
+
+  // 6. Koreksi AI (req_correction)
   socket.on('req_correction', async (data) => {
-    const { 
-      roomId, 
-      userId, 
-      userText, 
-      targetAyatText, 
-      expectedAyatIndex 
-    } = data;
+    const { roomId, userId, userText, targetAyatText, expectedAyatIndex } = data;
     
     try {
       const room = await Room.findOne({ roomId: roomId });
@@ -149,6 +133,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 7. Disconnect
   socket.on('disconnect', () => {
     console.log(`User Disconnected: ${socket.id}`);
     socket.broadcast.emit("callEnded");

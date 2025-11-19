@@ -108,26 +108,26 @@ exports.deleteRoom = async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Server error' }); }
 };
 
-// --- 🔥 FUNGSI BARU: GENERATE LIVEKIT TOKEN 🔥 ---
+// --- FUNGSI LIVEKIT TOKEN (FIXED CRASH) ---
 exports.getLiveKitToken = async (req, res) => {
     const { roomId } = req.params;
     const userId = req.user._id.toString();
     const username = req.user.username || req.user.email;
-    const roomName = roomId; // Kita pakai roomId sebagai nama LiveKit room
+    const roomName = roomId; 
 
     try {
         if (!process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
+            // Ini seharusnya dicegah di middleware, tapi kita tambahkan lagi
             return res.status(500).json({ message: 'LiveKit API keys are not configured on the server.' });
         }
-
-        // Buat token baru
+        
+        // 2. TOKEN GENERATION
         const token = new AccessToken(
             process.env.LIVEKIT_API_KEY, 
             process.env.LIVEKIT_API_SECRET, 
-            { identity: userId, name: username } // Identity unik (MongoDB ID)
+            { identity: userId, name: username } 
         );
 
-        // Beri izin untuk Join Room dan Publish (video/audio)
         token.addGrant({
             room: roomName,
             roomJoin: true,
@@ -135,10 +135,11 @@ exports.getLiveKitToken = async (req, res) => {
             canSubscribe: true,
         });
 
-        res.json({ token: token.toJwt() });
+        res.json({ token: token.toJwt() }); // 200 OK
 
     } catch (error) {
-        console.error("LiveKit Token Error:", error);
-        res.status(500).json({ message: 'Gagal menghasilkan token LiveKit.' });
+        // Jika ada crash di atas, kita pastikan di-log sebelum 500
+        console.error("FATAL CRASH DURING TOKEN GENERATION:", error);
+        res.status(500).json({ message: 'Token generation failed. Check server dependencies.' });
     }
 };

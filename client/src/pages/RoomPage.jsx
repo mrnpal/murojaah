@@ -3,13 +3,13 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
-// 🔥 FIX: Import LiveKit SDK
+// 🔥 FIX: IMPORT AUTH DARI FIREBASE
+import { auth } from '../firebase'; 
 import { Room, RoomEvent, createLocalTracks, VideoTrack } from 'livekit-client'; 
 import axios from 'axios';
 import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'; 
 import './RoomPage.css';
 
-// 1. Definisikan LiveKit URL & API Base
 const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || 'wss://localhost:7880';
 const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, ""); 
 
@@ -26,7 +26,6 @@ const RoomPage = () => {
   // --- STATE ---
   const [surahData, setSurahData] = useState([]); 
   const [isLoadingData, setIsLoadingData] = useState(true); 
-
   const [currentIndex, setCurrentIndex] = useState(0); 
   const [isFinished, setIsFinished] = useState(false); 
   const [aiFeedback, setAiFeedback] = useState(null);
@@ -38,7 +37,7 @@ const RoomPage = () => {
   // LIVEKIT STATE & REFS
   const lkRoomRef = useRef(null); 
   const [stream, setStream] = useState(null);
-  const [callAccepted, setCallAccepted] = useState(false); // LiveKit Connected Status
+  const [callAccepted, setCallAccepted] = useState(false); 
   const [isCameraOn, setIsCameraOn] = useState(true); 
   const [isRemoteCameraOn, setIsRemoteCameraOn] = useState(false); 
   const [isMicOn, setIsMicOn] = useState(true);       
@@ -49,7 +48,7 @@ const RoomPage = () => {
   const userVideo = useRef();
   const streamRef = useRef();
 
-  // --- (UseEffect hooks SAMA) ---
+  // --- LOGIKA EFEK SAMPING (SAMA) ---
   useEffect(() => {
     if (role === 'user' && listening && transcript && !isProcessing) {
       const silenceTimer = setTimeout(() => handleKoreksi(transcript), 1500); 
@@ -71,9 +70,22 @@ const RoomPage = () => {
 
   useEffect(() => {
     if (socket) {
-      socket.on('sync_ayat_index', (newIndex) => { /* ... */ });
-      socket.on('sync_ayat_reveal', (status) => setIsAyatRevealed(status));
-      return () => { socket.off('sync_ayat_index'); socket.off('sync_ayat_reveal'); };
+      socket.on('sync_ayat_index', (newIndex) => {
+        setCurrentIndex(newIndex);
+        if (surahData.length > 0 && newIndex >= surahData.length) setIsFinished(true);
+        else setIsFinished(false);
+        setAiFeedback(null);
+        if (role === 'user') resetTranscript();
+      });
+
+      socket.on('sync_ayat_reveal', (status) => {
+        setIsAyatRevealed(status);
+      });
+
+      return () => {
+        socket.off('sync_ayat_index');
+        socket.off('sync_ayat_reveal');
+      };
     }
   }, [socket, role, resetTranscript, surahData]);
 
@@ -81,7 +93,7 @@ const RoomPage = () => {
     if (aiFeedback && !aiFeedback.isCorrect) { setScore(s => ({ ...s, incorrect: s.incorrect + 1 })); }
   }, [aiFeedback]);
 
-  // --- 🔥 MAIN LIVEKIT CONNECTION LOGIC (FIXED) ---
+  // --- 🔥 MAIN LIVEKIT CONNECTION LOGIC (FIXED AUTH) ---
   useEffect(() => {
     const lkRoom = new Room();
     lkRoomRef.current = lkRoom;
@@ -161,14 +173,11 @@ const RoomPage = () => {
     });
     socket.on('room_error', (msg) => { alert(msg); setIsLoadingData(false); });
 
-    // 🔥 P2P LISTENERS DIHAPUS TOTAL DI SINI (callUser/answerCall/user_joined)
-    
     setTimeout(() => { // Jeda 3 detik
         socket.emit('join_room', roomId);
         socket.emit('camera_status', { roomId, status: true });
         socket.emit('mic_status', { roomId, status: true });
     }, 3000); 
-
 
     socket.on('remote_camera_status', ({ status }) => setIsRemoteCameraOn(status));
     socket.on('remote_mic_status', ({ status }) => setIsRemoteMicOn(status));
@@ -259,7 +268,7 @@ const RoomPage = () => {
               <div className="avatar-circle" style={{background:'#eb459e'}}><User /></div>
               <span style={{fontSize:'14px', fontWeight:'bold'}}>{!callAccepted ? "Menunggu..." : (role === 'admin' ? "Santri (Cam Off)" : "Ustadz (Cam Off)")}</span>
             </div>
-            <div className="user-tag">{role === 'admin' ? "Santri" : "Ustadz"}</div>
+            <div className user-tag>{role === 'admin' ? "Santri" : "Ustadz"}</div>
             {callAccepted && !isRemoteMicOn && (<div className="mute-indicator" style={{background:'#da373c'}}><MicOff size={20} color="white" /></div>)}
           </div>
           <div className="video-wrapper">

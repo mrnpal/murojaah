@@ -3,10 +3,19 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
-// 🔥 GANTI: Import LiveKit SDK
-import { Room, RoomEvent, createLocalTracks, VideoTrack } from 'livekit-client';
-import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff, LogOut } from 'lucide-react'; 
-import axios from 'axios';
+import axios from 'axios'; 
+// 🔥 FIX: IMPORT LENGKAP UNTUK MEMPERBAIKI MASALAH RESOLUSI LIVEKIT
+import { 
+  Room, 
+  RoomEvent, 
+  createLocalTracks, 
+  VideoTrack, // Perlu diimpor secara eksplisit
+  LocalParticipant, 
+  RemoteParticipant, 
+  Track, // Tambahkan Track dasar
+  // Kita hilangkan Peer, karena kita pakai LiveKit
+} from 'livekit-client'; 
+import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'; 
 import './RoomPage.css';
 
 // 1. Definisikan LiveKit URL & API Base
@@ -35,20 +44,20 @@ const RoomPage = () => {
   
   const [isAyatRevealed, setIsAyatRevealed] = useState(false);
   
-  // 🔥 LIVEKIT STATE & REFS
+  // LIVEKIT STATE & REFS
   const lkRoomRef = useRef(null); 
-  const [callAccepted, setCallAccepted] = useState(false); // LiveKit Connected Status
+  const [callAccepted, setCallAccepted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(true); 
-  const [isRemoteCameraOn, setIsRemoteCameraOn] = useState(false); // Default false, biar gak bentrok
+  const [isRemoteCameraOn, setIsRemoteCameraOn] = useState(false); 
   const [isMicOn, setIsMicOn] = useState(true);       
-  const [isRemoteMicOn, setIsRemoteMicOn] = useState(false); // Default false
+  const [isRemoteMicOn, setIsRemoteMicOn] = useState(false); 
   const [remoteTranscript, setRemoteTranscript] = useState("");
 
   const myVideo = useRef();
   const userVideo = useRef();
   const streamRef = useRef();
 
-  // --- LOGIKA UTAMA (SAMA) ---
+  // --- (UseEffect hooks SAMA) ---
   useEffect(() => {
     if (role === 'user' && listening && transcript && !isProcessing) {
       const silenceTimer = setTimeout(() => handleKoreksi(transcript), 1500); 
@@ -65,10 +74,35 @@ const RoomPage = () => {
   }, [transcript, role, socket, roomId]);
 
   useEffect(() => {
+    if (myVideo.current && stream) myVideo.current.srcObject = stream;
+  }, [isCameraOn, stream]);
+
+  useEffect(() => {
+    if (socket) {
+      socket.on('sync_ayat_index', (newIndex) => {
+        setCurrentIndex(newIndex);
+        if (surahData.length > 0 && newIndex >= surahData.length) setIsFinished(true);
+        else setIsFinished(false);
+        setAiFeedback(null);
+        if (role === 'user') resetTranscript();
+      });
+
+      socket.on('sync_ayat_reveal', (status) => {
+        setIsAyatRevealed(status);
+      });
+
+      return () => {
+        socket.off('sync_ayat_index');
+        socket.off('sync_ayat_reveal');
+      };
+    }
+  }, [socket, role, resetTranscript, surahData]);
+
+  useEffect(() => {
     if (aiFeedback && !aiFeedback.isCorrect) { setScore(s => ({ ...s, incorrect: s.incorrect + 1 })); }
   }, [aiFeedback]);
 
-  // --- 🔥 LIVEKIT CONNECTION LOGIC (Mengganti WebRTC P2P) ---
+  // --- 🔥 LIVEKIT CONNECTION LOGIC ---
   useEffect(() => {
     const lkRoom = new Room();
     lkRoomRef.current = lkRoom;
@@ -84,10 +118,8 @@ const RoomPage = () => {
 
         // 2. Dapatkan Media Stream (Kamera & Mic)
         const localTracks = await createLocalTracks({ video: true, audio: true });
-        // Simpan stream di ref (Untuk SpeechRecognition dan Toggle)
         streamRef.current = new MediaStream(localTracks.map(t => t.mediaStreamTrack)); 
         
-        // Atur video lokal di UI
         if (myVideo.current) myVideo.current.srcObject = streamRef.current;
 
         // 3. Gabungkan Listeners (Soket + LiveKit)
@@ -102,7 +134,7 @@ const RoomPage = () => {
 
         // 6. Listener LiveKit (Update Remote Video/Audio)
         room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-            // Hanya attach video dan update status mic/cam lawan
+            // Cek instance VideoTrack
             if (track instanceof VideoTrack) {
                 track.attach(userVideo.current);
                 setIsRemoteCameraOn(true);
@@ -111,18 +143,17 @@ const RoomPage = () => {
         });
         
         room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
-            // Update status lawan saat mereka unpublish
             if (track.kind === 'video') setIsRemoteCameraOn(false);
             if (track.kind === 'audio') setIsRemoteMicOn(false);
         });
 
       } catch (e) {
         console.error('KONEKSI LIVEKIT GAGAL:', e);
+        // Tampilkan error ke user
         socket.emit('room_error', 'Koneksi media gagal total. Cek log.');
       }
     };
     
-    // Mulai koneksi setelah user dan socket siap
     if (currentUser && socket && roomId && LIVEKIT_URL) {
         setupLiveKit(currentUser, lkRoom);
     }
@@ -133,47 +164,39 @@ const RoomPage = () => {
   }, [currentUser, socket, roomId]);
 
 
-  // --- SOCKET LISTENERS (Sudah disederhanakan) ---
+  // --- SOCKET LISTENERS ---
   const setupSocketListeners = () => {
     if (!socket) return;
     
-    socket.off('remote_live_transcript'); 
-    socket.off('room_data'); socket.off('room_error');
+    // Reset listeners (agar tidak duplikat)
+    socket.off('user_joined'); socket.off('callUser'); socket.off('callAccepted'); 
+    socket.off('res_correction'); socket.off('remote_camera_status'); socket.off('remote_mic_status');
     socket.off('sync_ayat_index'); socket.off('sync_ayat_reveal');
+    socket.off('room_data'); socket.off('room_error');
 
-    // 1. Ambil Data Surah (tetap dikirim via Socket)
     socket.on('room_data', (data) => {
       setSurahData(data.fullAyatText);
       setIsLoadingData(false);
     });
     socket.on('room_error', (msg) => { alert(msg); setIsLoadingData(false); });
-    socket.emit('join_room', roomId); // Kirim event join (LiveKit handle WebRTC)
 
-    // 2. Sync Ayat Index & Reveal (SAMA)
-    socket.on('sync_ayat_index', (newIndex) => {
-        setCurrentIndex(newIndex);
-        if (surahData.length > 0 && newIndex >= surahData.length) setIsFinished(true);
-        else setIsFinished(false);
-        setAiFeedback(null);
-        if (role === 'user') resetTranscript();
-      });
-    socket.on('sync_ayat_reveal', (status) => setIsAyatRevealed(status));
+    socket.emit('join_room', roomId);
+    socket.emit('camera_status', { roomId, status: true });
+    socket.emit('mic_status', { roomId, status: true });
 
-    // LiveKit sudah handle signaling, ini hanya untuk status display
+    // LiveKit sudah handle call/answer
     socket.on('remote_camera_status', ({ status }) => setIsRemoteCameraOn(status));
     socket.on('remote_mic_status', ({ status }) => setIsRemoteMicOn(status));
   };
 
 
-  // --- TOGGLES (DIUBAH KE LIVEKIT SDK) ---
+  // --- TOGGLES (Menggunakan LiveKit SDK) ---
   const toggleCamera = () => {
     const room = lkRoomRef.current;
     if (room && room.localParticipant) {
         const newState = !isCameraOn;
-        // Gunakan LiveKit SDK untuk mematikan/menyalakan kamera
         room.localParticipant.setCameraEnabled(newState);
         setIsCameraOn(newState);
-        // Tetap kirim signal via socket agar lawan bisa update UI
         socket.emit('camera_status', { roomId, status: newState });
     }
   };
@@ -182,7 +205,6 @@ const RoomPage = () => {
     const room = lkRoomRef.current;
     if (room && room.localParticipant) {
         const newState = !isMicOn;
-        // Gunakan LiveKit SDK untuk mematikan/menyalakan mic
         room.localParticipant.setMicrophoneEnabled(newState);
         setIsMicOn(newState);
         socket.emit('mic_status', { roomId, status: newState });
@@ -238,9 +260,10 @@ const RoomPage = () => {
       {/* STREAM AREA */}
       <div className="stream-area">
         <div className="video-grid">
-          {/* Video Lawan */}
           <div className="video-wrapper">
+            {/* Video Lawan */}
             <video playsInline ref={userVideo} autoPlay style={{ opacity: (callAccepted && isRemoteCameraOn) ? 1 : 0 }} />
+            {/* Avatar Lawan */}
             <div className="discord-avatar" style={{ opacity: (callAccepted && isRemoteCameraOn) ? 0 : 1, zIndex: (callAccepted && isRemoteCameraOn) ? -1 : 5 }}>
               <div className="avatar-circle" style={{background:'#eb459e'}}><User /></div>
               <span style={{fontSize:'14px', fontWeight:'bold'}}>{!callAccepted ? "Menunggu..." : (role === 'admin' ? "Santri (Cam Off)" : "Ustadz (Cam Off)")}</span>
@@ -248,9 +271,10 @@ const RoomPage = () => {
             <div className="user-tag">{role === 'admin' ? "Santri" : "Ustadz"}</div>
             {callAccepted && !isRemoteMicOn && (<div className="mute-indicator" style={{background:'#da373c'}}><MicOff size={20} color="white" /></div>)}
           </div>
-          {/* Video Saya */}
           <div className="video-wrapper">
+            {/* Video Saya */}
             <video playsInline muted ref={myVideo} autoPlay style={{ transform:'scaleX(-1)', opacity: isCameraOn ? 1 : 0 }} />
+            {/* Avatar Saya */}
             <div className="discord-avatar" style={{ opacity: isCameraOn ? 0 : 1, zIndex: isCameraOn ? -1 : 5 }}>
               <div className="avatar-circle"><User /></div>
               <span style={{fontSize:'14px', fontWeight:'bold'}}>Saya ({role})</span>

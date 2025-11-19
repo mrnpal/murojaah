@@ -3,7 +3,8 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
-// 🔥 GANTI: Import LiveKit SDK
+import { auth } from '../firebase';
+
 import { Room, RoomEvent, createLocalTracks, VideoTrack } from 'livekit-client'; 
 import axios from 'axios';
 import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'; 
@@ -88,31 +89,34 @@ const RoomPage = () => {
 
     const setupLiveKit = async (user, room) => {
       try {
+        // 1. Dapatkan Token dari Backend kita
+        // 🔥 FIX: Minta token dari service auth, bukan dari currentUser MongoDB
+        const token = await auth.currentUser.getIdToken(); 
+        
         const tokenResponse = await axios.get(
           `${API_BASE_URL}/api/rooms/${roomId}/token`,
-          { headers: { Authorization: `Bearer ${await user.getIdToken()}` } }
+          { headers: { Authorization: `Bearer ${token}` } }
         );
-        const token = tokenResponse.data.token;
+        const jwtToken = tokenResponse.data.token;
 
-        // 1. Dapatkan Media Stream (Kamera & Mic)
+        // 2. Dapatkan Media Stream (Kamera & Mic)
         const localTracks = await createLocalTracks({ video: true, audio: true });
         streamRef.current = new MediaStream(localTracks.map(t => t.mediaStreamTrack)); 
         
         if (myVideo.current) myVideo.current.srcObject = streamRef.current;
 
-        // 2. Setup Socket Listeners
+        // 3. Setup Socket Listeners
         setupSocketListeners();
         
-        // 3. Connect ke LiveKit Server
-        await room.connect(LIVEKIT_URL, token);
-        setCallAccepted(true); // Connected
+        // 4. Connect ke LiveKit Server
+        await room.connect(LIVEKIT_URL, jwtToken); // Gunakan token JWT dari backend
+        setCallAccepted(true);
 
-        // 4. Publish Media
+        // 5. Publish Media
         await room.localParticipant.publishTracks(localTracks);
 
-        // 5. Listener LiveKit (Kapan remote user publish/unpublish)
+        // 6. Listener LiveKit (Update Remote Video/Audio)
         room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-            // 🔥 Attach stream remote saat diterima
             if (track.kind === 'video') {
                 track.attach(userVideo.current);
                 setIsRemoteCameraOn(true);
@@ -131,7 +135,8 @@ const RoomPage = () => {
       }
     };
     
-    if (currentUser && socket && roomId && LIVEKIT_URL) {
+    // Pastikan user dan socket siap sebelum memulai
+    if (currentUser && auth.currentUser && socket && roomId && LIVEKIT_URL) {
         setupLiveKit(currentUser, lkRoom);
     }
 
@@ -235,8 +240,7 @@ const RoomPage = () => {
     socket.emit('admin_toggle_reveal', { roomId, isRevealed: newState });
   };
 
-  // --- RENDER (SAMA) ---
-  if (isLoadingData || !currentUser) { 
+  if (isLoadingData || !currentUser) { // Tambahkan cek currentUser
     return <div className="discord-container" style={{justifyContent:'center', alignItems:'center', color:'white'}}><Loader2 className="animate-spin" size={48} /><h2 style={{color: '#949ba4', marginTop: 20}}>Menghubungkan...</h2></div>;
   }
 

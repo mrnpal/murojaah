@@ -129,12 +129,12 @@ const RoomPage = () => {
 
     // 🔥 JEDA 3 DETIK (3000ms) SEBELUM MENGIRIM 'join_room'
     setTimeout(() => {
-        console.log("7 detik berlalu. Mengirim 'join_room'.");
+        console.log("10 detik berlalu. Mengirim 'join_room'.");
         socket.emit('join_room', roomId);
         // Status awal dikirim setelah join room
         socket.emit('camera_status', { roomId, status: true });
         socket.emit('mic_status', { roomId, status: true });
-    }, 7000); // 3 detik
+    }, 10000); // 3 detik
 
     // Listener WebRTC (tanpa delay 500ms yang sebelumnya)
     socket.on('user_joined', (userId) => callUser(userId, currentStream));

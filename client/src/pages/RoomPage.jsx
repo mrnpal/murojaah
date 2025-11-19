@@ -3,17 +3,13 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
-import axios from 'axios'; 
-// 🔥 FIX: IMPORT LENGKAP UNTUK MEMPERBAIKI MASALAH RESOLUSI LIVEKIT
+import axios from 'axios';
+// 🔥 FIX 1: Hapus VideoTrack yang menyebabkan error build
 import { 
   Room, 
   RoomEvent, 
   createLocalTracks, 
-  VideoTrack, // Perlu diimpor secara eksplisit
-  LocalParticipant, 
-  RemoteParticipant, 
-  Track, // Tambahkan Track dasar
-  // Kita hilangkan Peer, karena kita pakai LiveKit
+  // Kita hilangkan VideoTrack, kita pakai track.kind === 'video'
 } from 'livekit-client'; 
 import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'; 
 import './RoomPage.css';
@@ -102,40 +98,36 @@ const RoomPage = () => {
     if (aiFeedback && !aiFeedback.isCorrect) { setScore(s => ({ ...s, incorrect: s.incorrect + 1 })); }
   }, [aiFeedback]);
 
-  // --- 🔥 LIVEKIT CONNECTION LOGIC ---
+  // --- SETUP SOCKET & PEER ---
   useEffect(() => {
     const lkRoom = new Room();
     lkRoomRef.current = lkRoom;
 
     const setupLiveKit = async (user, room) => {
       try {
-        // 1. Dapatkan Token dari Backend kita
         const tokenResponse = await axios.get(
           `${API_BASE_URL}/api/rooms/${roomId}/token`,
           { headers: { Authorization: `Bearer ${await user.getIdToken()}` } }
         );
         const token = tokenResponse.data.token;
 
-        // 2. Dapatkan Media Stream (Kamera & Mic)
         const localTracks = await createLocalTracks({ video: true, audio: true });
-        streamRef.current = new MediaStream(localTracks.map(t => t.mediaStreamTrack)); 
+        const currentStream = new MediaStream(localTracks.map(t => t.mediaStreamTrack));
+        streamRef.current = currentStream; 
         
         if (myVideo.current) myVideo.current.srcObject = streamRef.current;
 
-        // 3. Gabungkan Listeners (Soket + LiveKit)
         setupSocketListeners();
         
-        // 4. Connect ke LiveKit Server
         await room.connect(LIVEKIT_URL, token);
         setCallAccepted(true);
 
-        // 5. Publish Media
         await room.localParticipant.publishTracks(localTracks);
 
         // 6. Listener LiveKit (Update Remote Video/Audio)
         room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-            // Cek instance VideoTrack
-            if (track instanceof VideoTrack) {
+            // 🔥 FIX 2: Cek track.kind (lebih stabil)
+            if (track.kind === 'video') {
                 track.attach(userVideo.current);
                 setIsRemoteCameraOn(true);
             }
@@ -149,7 +141,6 @@ const RoomPage = () => {
 
       } catch (e) {
         console.error('KONEKSI LIVEKIT GAGAL:', e);
-        // Tampilkan error ke user
         socket.emit('room_error', 'Koneksi media gagal total. Cek log.');
       }
     };

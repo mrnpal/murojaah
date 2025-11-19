@@ -3,8 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
-import { auth } from '../firebase';
-
+// 🔥 FIX: Import LiveKit SDK
 import { Room, RoomEvent, createLocalTracks, VideoTrack } from 'livekit-client'; 
 import axios from 'axios';
 import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'; 
@@ -38,7 +37,7 @@ const RoomPage = () => {
   
   // LIVEKIT STATE & REFS
   const lkRoomRef = useRef(null); 
-  const [stream, setStream] = useState(null); // Stream lokal (audio/video)
+  const [stream, setStream] = useState(null);
   const [callAccepted, setCallAccepted] = useState(false); // LiveKit Connected Status
   const [isCameraOn, setIsCameraOn] = useState(true); 
   const [isRemoteCameraOn, setIsRemoteCameraOn] = useState(false); 
@@ -50,7 +49,7 @@ const RoomPage = () => {
   const userVideo = useRef();
   const streamRef = useRef();
 
-  // --- LOGIKA EFEK SAMPING (SAMA) ---
+  // --- (UseEffect hooks SAMA) ---
   useEffect(() => {
     if (role === 'user' && listening && transcript && !isProcessing) {
       const silenceTimer = setTimeout(() => handleKoreksi(transcript), 1500); 
@@ -82,7 +81,7 @@ const RoomPage = () => {
     if (aiFeedback && !aiFeedback.isCorrect) { setScore(s => ({ ...s, incorrect: s.incorrect + 1 })); }
   }, [aiFeedback]);
 
-  // --- 🔥 MAIN LIVEKIT CONNECTION LOGIC (Mengganti P2P) ---
+  // --- 🔥 MAIN LIVEKIT CONNECTION LOGIC (FIXED) ---
   useEffect(() => {
     const lkRoom = new Room();
     lkRoomRef.current = lkRoom;
@@ -90,9 +89,7 @@ const RoomPage = () => {
     const setupLiveKit = async (user, room) => {
       try {
         // 1. Dapatkan Token dari Backend kita
-        // 🔥 FIX: Minta token dari service auth, bukan dari currentUser MongoDB
         const token = await auth.currentUser.getIdToken(); 
-        
         const tokenResponse = await axios.get(
           `${API_BASE_URL}/api/rooms/${roomId}/token`,
           { headers: { Authorization: `Bearer ${token}` } }
@@ -109,7 +106,7 @@ const RoomPage = () => {
         setupSocketListeners();
         
         // 4. Connect ke LiveKit Server
-        await room.connect(LIVEKIT_URL, jwtToken); // Gunakan token JWT dari backend
+        await room.connect(LIVEKIT_URL, jwtToken);
         setCallAccepted(true);
 
         // 5. Publish Media
@@ -135,7 +132,7 @@ const RoomPage = () => {
       }
     };
     
-    // Pastikan user dan socket siap sebelum memulai
+    // Mulai koneksi setelah user dan socket siap
     if (currentUser && auth.currentUser && socket && roomId && LIVEKIT_URL) {
         setupLiveKit(currentUser, lkRoom);
     }
@@ -150,10 +147,10 @@ const RoomPage = () => {
   const setupSocketListeners = () => {
     if (!socket) return;
     
-    // Reset listeners (HANYA BUTUH SINKRONISASI, BUKAN PEER CONNECTION)
+    // Reset listeners (HANYA BUTUH SINKRONISASI)
     socket.off('user_joined'); 
-    socket.off('callUser'); // Dihapus
-    socket.off('answerCall'); // Dihapus
+    socket.off('callUser'); 
+    socket.off('answerCall'); 
     socket.off('res_correction'); socket.off('remote_camera_status'); 
     socket.off('remote_mic_status'); socket.off('sync_ayat_index'); 
     socket.off('sync_ayat_reveal'); socket.off('room_data'); socket.off('room_error');
@@ -164,19 +161,24 @@ const RoomPage = () => {
     });
     socket.on('room_error', (msg) => { alert(msg); setIsLoadingData(false); });
 
-    socket.emit('join_room', roomId);
-    socket.emit('camera_status', { roomId, status: true });
-    socket.emit('mic_status', { roomId, status: true });
+    // 🔥 P2P LISTENERS DIHAPUS TOTAL DI SINI (callUser/answerCall/user_joined)
+    
+    setTimeout(() => { // Jeda 3 detik
+        socket.emit('join_room', roomId);
+        socket.emit('camera_status', { roomId, status: true });
+        socket.emit('mic_status', { roomId, status: true });
+    }, 3000); 
+
 
     socket.on('remote_camera_status', ({ status }) => setIsRemoteCameraOn(status));
     socket.on('remote_mic_status', ({ status }) => setIsRemoteMicOn(status));
-    socket.on('sync_ayat_index', (newIndex) => { /* ... logic ... */ });
+    socket.on('sync_ayat_index', (newIndex) => { /* ... */ });
     socket.on('sync_ayat_reveal', (status) => setIsAyatRevealed(status));
     socket.on('res_correction', (data) => { setAiFeedback(data); setIsProcessing(false); });
   };
 
 
-  // --- P2P FUNCTIONS DIHAPUS (HANYA DUMMY UNTUK COMPATIBILITY) ---
+  // --- P2P FUNCTIONS (DIHAPUS KARENA SUDAH PAKAI LIVEKIT) ---
   const callUser = () => {};
   const answerCall = () => {};
 
@@ -205,7 +207,7 @@ const RoomPage = () => {
   // --- KOREKSI & NAVIGASI (SAMA) ---
   const handleKoreksi = (textOverride) => {
     if (role !== 'user') return;
-    const textToSend = (typeof textOverride === 'string' && textOverride) ? textOverride : transcript;
+    const textToSend = (typeof textOverride === 'string' && textOverride) ? textToSend : transcript;
     if (!textToSend || surahData.length === 0) return;
     setIsProcessing(true); setAiFeedback(null);
     SpeechRecognition.stopListening(); 
@@ -240,7 +242,8 @@ const RoomPage = () => {
     socket.emit('admin_toggle_reveal', { roomId, isRevealed: newState });
   };
 
-  if (isLoadingData || !currentUser) { // Tambahkan cek currentUser
+  // --- RENDER ---
+  if (isLoadingData || !currentUser) { 
     return <div className="discord-container" style={{justifyContent:'center', alignItems:'center', color:'white'}}><Loader2 className="animate-spin" size={48} /><h2 style={{color: '#949ba4', marginTop: 20}}>Menghubungkan...</h2></div>;
   }
 

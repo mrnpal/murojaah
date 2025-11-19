@@ -40,7 +40,7 @@ const RoomPage = () => {
   const connectionRef = useRef();
   const streamRef = useRef();
 
-  // --- LOGIKA AUTO SEND & LIVE TRANSCRIPT (SAMA) ---
+  // --- LOGIKA UTAMA (SAMA) ---
   useEffect(() => {
     if (role === 'user' && listening && transcript && !isProcessing) {
       const silenceTimer = setTimeout(() => handleKoreksi(transcript), 1500); 
@@ -60,16 +60,12 @@ const RoomPage = () => {
     if (myVideo.current && stream) myVideo.current.srcObject = stream;
   }, [isCameraOn, stream]);
 
-  // --- SINKRONISASI AYAT & REVEAL (SAMA) ---
   useEffect(() => {
     if (socket) {
       socket.on('sync_ayat_index', (newIndex) => {
         setCurrentIndex(newIndex);
-        setIsAyatRevealed(false);
-        
         if (surahData.length > 0 && newIndex >= surahData.length) setIsFinished(true);
         else setIsFinished(false);
-        
         setAiFeedback(null);
         if (role === 'user') resetTranscript();
       });
@@ -91,7 +87,7 @@ const RoomPage = () => {
     }
   }, [aiFeedback]);
 
-  // --- SETUP SOCKET & PEER ---
+  // --- SETUP SOCKET & PEER (FIXED) ---
   useEffect(() => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((currentStream) => {
         setStream(currentStream);
@@ -110,33 +106,30 @@ const RoomPage = () => {
     };
   }, [socket, roomId]);
 
-  // 🔥 PERUBAHAN UTAMA DI SINI
   const setupSocketListeners = (currentStream) => {
     if (!socket) return;
     
-    // Reset listeners (penting untuk cleanup)
+    // Reset listeners
     socket.off('user_joined'); socket.off('callUser'); socket.off('callAccepted'); 
     socket.off('res_correction'); socket.off('remote_camera_status'); socket.off('remote_mic_status');
     socket.off('sync_ayat_index'); socket.off('sync_ayat_reveal');
     socket.off('room_data'); socket.off('room_error');
 
-    // Listener data room (ini tetap harus segera didengar)
     socket.on('room_data', (data) => {
       setSurahData(data.fullAyatText);
       setIsLoadingData(false);
     });
     socket.on('room_error', (msg) => { alert(msg); setIsLoadingData(false); });
 
-    // 🔥 JEDA 3 DETIK (3000ms) SEBELUM MENGIRIM 'join_room'
+    // 🔥 FIX: JEDA 3 DETIK (3000ms) SEBELUM MENGIRIM 'join_room'
     setTimeout(() => {
-        console.log("10 detik berlalu. Mengirim 'join_room'.");
+        console.log("3 detik berlalu. Mengirim 'join_room'.");
         socket.emit('join_room', roomId);
-        // Status awal dikirim setelah join room
         socket.emit('camera_status', { roomId, status: true });
         socket.emit('mic_status', { roomId, status: true });
-    }, 10000); // 3 detik
+    }, 3000); // 3 detik
 
-    // Listener WebRTC (tanpa delay 500ms yang sebelumnya)
+    // Listener WebRTC (Tanpa delay di sini)
     socket.on('user_joined', (userId) => callUser(userId, currentStream));
     socket.on("callUser", (data) => answerCall(data, currentStream));
     
@@ -144,44 +137,66 @@ const RoomPage = () => {
     socket.on('res_correction', (data) => { setAiFeedback(data); setIsProcessing(false); });
     socket.on('remote_camera_status', ({ status }) => setIsRemoteCameraOn(status));
     socket.on('remote_mic_status', ({ status }) => setIsRemoteMicOn(status));
+    socket.on('admin_toggle_reveal', (status) => setIsAyatRevealed(status));
   };
 
+
+  // --- 🔥 FIX UTAMA: callUser (Anti Race Condition - Manual Track) ---
   const callUser = (id, stream) => {
-    const peer = new Peer({ initiator: true, trickle: false, stream });
+    if (connectionRef.current && connectionRef.current.connected) return;
+
+    // 1. Buat peer KOSONGAN (tanpa stream di constructor)
+    const peer = new Peer({ initiator: true, trickle: false });
+
+    // 2. Tambahkan track secara manual (memastikan stream sudah siap)
+    stream.getTracks().forEach(track => {
+      peer.addTrack(track, stream);
+    });
+
+    // 3. Sisanya sama
     peer.on("signal", data => socket.emit("callUser", { userToCall: id, signalData: data, from: me }));
     peer.on("stream", remote => { if (userVideo.current) userVideo.current.srcObject = remote; setIsRemoteCameraOn(true); setIsRemoteMicOn(true); });
     socket.on("callAccepted", signal => { setCallAccepted(true); peer.signal(signal); });
     connectionRef.current = peer;
   };
 
+  // --- 🔥 FIX UTAMA: answerCall (Anti Race Condition - Manual Track) ---
   const answerCall = (data, stream) => {
+    if (connectionRef.current && connectionRef.current.connected) return;
     setCallAccepted(true);
-    const peer = new Peer({ initiator: false, trickle: false, stream });
+    
+    // 1. Buat peer KOSONGAN (tanpa stream di constructor)
+    const peer = new Peer({ initiator: false, trickle: false });
+
+    // 2. Tambahkan track secara manual
+    stream.getTracks().forEach(track => {
+      peer.addTrack(track, stream);
+    });
+    
+    // 3. Sisanya sama
     peer.on("signal", signal => socket.emit("answerCall", { signal, to: data.from }));
     peer.on("stream", remote => { if (userVideo.current) userVideo.current.srcObject = remote; setIsRemoteCameraOn(true); setIsRemoteMicOn(true); });
     peer.signal(data.signal);
     connectionRef.current = peer;
   };
 
+  // --- TOGGLES & KOREKSI (SAMA) ---
   const toggleCamera = () => {
     if (streamRef.current) {
       const videoTrack = streamRef.current.getVideoTracks()[0];
       if (videoTrack) { videoTrack.enabled = !videoTrack.enabled; setIsCameraOn(videoTrack.enabled); socket.emit('camera_status', { roomId, status: videoTrack.enabled }); }
     }
   };
-
   const toggleMic = () => {
     if (streamRef.current) {
       const audioTrack = streamRef.current.getAudioTracks()[0];
       if (audioTrack) { audioTrack.enabled = !audioTrack.enabled; setIsMicOn(audioTrack.enabled); socket.emit('mic_status', { roomId, status: audioTrack.enabled }); }
     }
   };
-
   const handleKoreksi = (textOverride) => {
     if (role !== 'user') return;
     const textToSend = (typeof textOverride === 'string' && textOverride) ? textOverride : transcript;
     if (!textToSend || surahData.length === 0) return;
-
     setIsProcessing(true); setAiFeedback(null);
     SpeechRecognition.stopListening(); 
     if (!surahData[currentIndex]) return; 
@@ -196,7 +211,7 @@ const RoomPage = () => {
     if (newIndex >= surahData.length) newIndex = surahData.length; 
     if (direction > 0 && newIndex <= surahData.length) {
       setScore(s => ({ ...s, correct: s.correct + 1 }));
-      if(aiFeedback && !aiFeedback.isCorrect) setScore(s => ({ ...s, incorrect: Math.max(0, s.incorrect - 1) }));
+      if(aiFeedback && !aiFeedback.isCorrect) { setScore(s => ({ ...s, incorrect: Math.max(0, s.incorrect - 1) })); }
     }
     socket.emit('admin_change_ayat', { roomId, newIndex });
   };
@@ -215,7 +230,8 @@ const RoomPage = () => {
     socket.emit('admin_toggle_reveal', { roomId, isRevealed: newState });
   };
 
-  // --- RENDER (SAMA) ---
+
+  // --- RENDER ---
   if (isLoadingData) {
     return <div className="discord-container" style={{justifyContent:'center', alignItems:'center', color:'white'}}><Loader2 className="animate-spin" size={48} /><h2 style={{color: '#949ba4', marginTop: 20}}>Menghubungkan...</h2></div>;
   }
@@ -246,27 +262,22 @@ const RoomPage = () => {
           </div>
         </div>
         <div className="control-dock">
-           <button className={`dock-btn ${!isMicOn ? 'active' : ''}`} onClick={toggleMic}><Mic size={24} /></button>
-           <button className={`dock-btn ${!isCameraOn ? 'active' : ''}`} onClick={toggleCamera}><Video size={24} /></button>
+           <button className={`dock-btn ${!isMicOn ? 'active' : ''}`} onClick={toggleMic} title="Mute">{isMicOn ? <Mic size={24} /> : <MicOff size={24} />}</button>
+           <button className={`dock-btn ${!isCameraOn ? 'active' : ''}`} onClick={toggleCamera} title="Camera">{isCameraOn ? <Video size={24} /> : <VideoOff size={24} />}</button>
            {role === 'user' && (
              <button className={`dock-btn ${listening ? 'listening' : ''}`} onClick={listening ? SpeechRecognition.stopListening : () => SpeechRecognition.startListening({ language: 'id-ID', continuous: true })} title="Rekam Hafalan">
                <Activity size={24} />
              </button>
            )}
-           <button className="dock-btn red-btn" onClick={() => window.location.href='/'}><div style={{width:'16px', height:'16px', background:'#da373c', borderRadius:'2px'}}></div></button>
+           <button className="dock-btn red-btn" onClick={() => window.location.href='/'} title="Keluar"><div style={{width:'16px', height:'16px', background:'#da373c', borderRadius:'2px'}}></div></button>
         </div>
       </div>
-
-      {/* SIDEBAR PANEL */}
       <div className="sidebar-panel">
         <div className="sidebar-header">
            <div className="channel-name"><Hash size={20} color="#949ba4"/> setoran-hafalan</div>
            <span className="room-pill" style={{background: role === 'admin' ? '#da373c' : '#5865f2', color:'white'}}>{role === 'admin' ? 'USTADZ' : 'SANTRI'}</span>
         </div>
-
         <div className="sidebar-content">
-          
-          {/* PANEL TARGET AYAT (MODIFIED) */}
           <div className="target-msg">
              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
                <div className="msg-label">Target Ayat ({currentIndex + 1 > surahData.length ? "Selesai" : `${currentIndex + 1}/${surahData.length}`})</div>
@@ -277,59 +288,44 @@ const RoomPage = () => {
                  </div>
                )}
              </div>
-             
              <div className="msg-content">
-               {isFinished ? "Shadaqallahul 'adzim" : (
-                 role === 'admin' ? (
-                   // ADMIN: Lihat Teks Arab
-                   <span style={{fontSize:'24px', fontWeight:'bold', display:'block', marginTop:'5px', fontFamily:'Arial, sans-serif', direction: 'rtl'}}>
-                     {surahData[currentIndex]?.textArab}
-                   </span>
-                 ) : (
-                   // USER: Lihat Blur (Kecuali di-reveal)
-                   <div style={{background:'#1e1f22', padding:'15px', borderRadius:'8px', textAlign:'center', border:'1px dashed #4e5058', marginTop:'5px'}}>
-                      <div style={{
-                          filter: isAyatRevealed ? 'none' : 'blur(6px)', 
-                          opacity: isAyatRevealed ? 1 : 0.4,
-                          marginBottom:'5px', fontSize: 20, direction: 'rtl',
-                          transition: 'all 0.5s ease'
-                      }}>
-                        {surahData[currentIndex]?.textArab}
-                      </div>
-                      <span style={{fontSize:'12px', color: isAyatRevealed ? '#23a559' : '#949ba4', fontStyle:'italic'}}>
-                        {isAyatRevealed ? "(Ayat Terbuka - Silakan Baca)" : "(Hafalkan Ayat Ini)"}
-                      </span>
-                   </div>
-                 )
-               )}
+               {isFinished ? ("Shadaqallahul 'adzim") : (role === 'admin' ? (<span style={{fontSize:'24px', fontWeight:'bold', display:'block', marginTop:'5px', fontFamily:'Arial, sans-serif', direction: 'rtl'}}>{surahData[currentIndex]?.textArab || "Selesai"}</span>) : (<div style={{background:'#1e1f22', padding:'15px', borderRadius:'8px', textAlign:'center', border:'1px dashed #4e5058', marginTop:'5px'}}><div style={{filter: isAyatRevealed ? 'none' : 'blur(6px)', opacity: isAyatRevealed ? 1 : 0.4, marginBottom:'5px', fontSize: 20, direction: 'rtl', transition: 'all 0.5s ease'}}>{surahData[currentIndex]?.textArab}</div><span style={{fontSize:'12px', color: isAyatRevealed ? '#23a559' : '#949ba4', fontStyle:'italic'}}>{isAyatRevealed ? "(Ayat Terbuka - Silakan Baca)" : "(Hafalkan Ayat Ini)"}</span></div>))}
              </div>
           </div>
-          
-          {/* PANEL KONTROL ADMIN (SKOR & REVEAL) */}
           {role === 'admin' && (
             <div className="admin-controls">
               <div className="scorecard">
                 <div className="score-item correct"><span>BENAR</span><strong>{score.correct}</strong></div>
                 <div className="score-item incorrect"><span>SALAH</span><strong>{score.incorrect}</strong></div>
               </div>
-              
-              {/* TOMBOL MATA (HINT) */}
-              <button onClick={handleToggleReveal} className="nav-btn-manual" style={{width: '100%', marginBottom: '10px', background: isAyatRevealed ? '#f0b232' : '#4e5058', color: 'white'}}>
-                {isAyatRevealed ? <><EyeOff size={16}/> Tutup Bantuan Ayat</> : <><Eye size={16}/> Tampilkan Ayat ke Santri</>}
-              </button>
-
+              <button onClick={handleToggleReveal} className="nav-btn-manual" style={{width: '100%', marginBottom: '10px', background: isAyatRevealed ? '#f0b232' : '#4e5058', color: 'white'}}>{isAyatRevealed ? <><EyeOff size={16}/> Tutup Bantuan Ayat</> : <><Eye size={16}/> Tampilkan Ayat ke Santri</>}</button>
               <div className="override-buttons">
                 <button className="nav-btn-manual fail" onClick={handleAdminUlangi} disabled={isFinished}><X size={16}/> Ulangi</button>
                 <button className="nav-btn-manual pass" onClick={() => handleAdminNav(1)} disabled={isFinished}><Check size={16}/> Loloskan</button>
               </div>
             </div>
           )}
-          
           <div style={{textAlign:'center', margin:'10px 0', color:'#585b60', fontSize:'12px', fontWeight:'bold'}}>AI Assistant</div>
-          {isProcessing && <div className="chat-bubble"><div className="bot-avatar"><Activity size={16} color="white"/></div><div className="chat-content"><div className="chat-user">AI<span className="room-pill">BOT</span></div><div className="chat-text">Menganalisa...</div></div></div>}
-          {aiFeedback && <div className="chat-bubble"><div className="bot-avatar" style={{background: aiFeedback.isCorrect ? '#23a559' : '#da373c'}}><Bot size={16} color="white"/></div><div className="chat-content"><div className="chat-user">AI<span className="room-pill">BOT</span></div><div className="chat-text" style={{fontWeight:'bold', color:aiFeedback.isCorrect?'#23a559':'#da373c'}}>{aiFeedback.isCorrect?"Benar":"Koreksi"}</div><div className="chat-text">{aiFeedback.adminMessage}</div></div></div>}
+          {isProcessing && (
+            <div className="chat-bubble">
+              <div className="bot-avatar"><Activity size={16} color="white"/></div>
+              <div className="chat-content">
+                 <div className="chat-user">AI Assistant <span className="room-pill">BOT</span></div>
+                 <div className="chat-text" style={{fontStyle:'italic'}}>Menganalisa...</div>
+              </div>
+            </div>
+          )}
+          {aiFeedback && (
+            <div className="chat-bubble">
+               <div className="bot-avatar" style={{background: aiFeedback.isCorrect ? '#23a559' : '#da373c'}}><Bot size={16} color="white"/></div>
+               <div className="chat-content">
+                  <div className="chat-user">AI Assistant <span className="room-pill">BOT</span></div>
+                  <div className="chat-text" style={{color: 'white', fontWeight:'bold', fontSize: '13px'}}>{aiFeedback.adminMessage}</div>
+                  {aiFeedback.santriGuidance && (<div className="chat-text" style={{background:'#1e1f22', padding:'8px', borderRadius:'4px', fontSize:'12px', fontFamily:'monospace'}}>Saran Santri: "{aiFeedback.santriGuidance}"</div>)}
+               </div>
+            </div>
+          )}
         </div>
-
         <div className="input-area">
            {role === 'user' ? (
              <><div className="transcript-input" style={{ border: listening ? '1px solid #23a559' : '1px solid transparent' }}>{transcript || "..."}</div></>

@@ -1,5 +1,6 @@
 const axios = require('axios'); // Pastikan axios sudah terinstall di server (npm install axios)
 const Room = require('../models/Room');
+const { AccessToken } = require('livekit-server-sdk');
 
 // --- 🔥 FUNGSI BARU: Fetch data surah dari API publik ---
 const fetchSurahData = async (surahNumber) => {
@@ -105,4 +106,39 @@ exports.deleteRoom = async (req, res) => {
     await Room.findByIdAndDelete(req.params.id);
     res.json({ message: 'Room berhasil dihapus' });
   } catch (error) { res.status(500).json({ message: 'Server error' }); }
+};
+
+// --- 🔥 FUNGSI BARU: GENERATE LIVEKIT TOKEN 🔥 ---
+exports.getLiveKitToken = async (req, res) => {
+    const { roomId } = req.params;
+    const userId = req.user._id.toString();
+    const username = req.user.username || req.user.email;
+    const roomName = roomId; // Kita pakai roomId sebagai nama LiveKit room
+
+    try {
+        if (!process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
+            return res.status(500).json({ message: 'LiveKit API keys are not configured on the server.' });
+        }
+
+        // Buat token baru
+        const token = new AccessToken(
+            process.env.LIVEKIT_API_KEY, 
+            process.env.LIVEKIT_API_SECRET, 
+            { identity: userId, name: username } // Identity unik (MongoDB ID)
+        );
+
+        // Beri izin untuk Join Room dan Publish (video/audio)
+        token.addGrant({
+            room: roomName,
+            roomJoin: true,
+            canPublish: true, 
+            canSubscribe: true,
+        });
+
+        res.json({ token: token.toJwt() });
+
+    } catch (error) {
+        console.error("LiveKit Token Error:", error);
+        res.status(500).json({ message: 'Gagal menghasilkan token LiveKit.' });
+    }
 };

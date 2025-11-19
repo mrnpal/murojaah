@@ -3,9 +3,16 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
-import Peer from 'simple-peer';
-import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'; 
+// 🔥 GANTI: Import LiveKit SDK
+import { Room, RoomEvent, createLocalTracks, VideoTrack } from 'livekit-client';
+import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff, LogOut } from 'lucide-react'; 
+import axios from 'axios';
 import './RoomPage.css';
+
+// 1. Definisikan LiveKit URL & API Base
+const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || 'wss://localhost:7880';
+const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, ""); 
+
 
 const RoomPage = () => {
   const { roomId } = useParams();
@@ -27,17 +34,18 @@ const RoomPage = () => {
   const [score, setScore] = useState({ correct: 0, incorrect: 0 });
   
   const [isAyatRevealed, setIsAyatRevealed] = useState(false);
-  const [stream, setStream] = useState(null);
-  const [callAccepted, setCallAccepted] = useState(false);
+  
+  // 🔥 LIVEKIT STATE & REFS
+  const lkRoomRef = useRef(null); 
+  const [callAccepted, setCallAccepted] = useState(false); // LiveKit Connected Status
   const [isCameraOn, setIsCameraOn] = useState(true); 
-  const [isRemoteCameraOn, setIsRemoteCameraOn] = useState(true);
+  const [isRemoteCameraOn, setIsRemoteCameraOn] = useState(false); // Default false, biar gak bentrok
   const [isMicOn, setIsMicOn] = useState(true);       
-  const [isRemoteMicOn, setIsRemoteMicOn] = useState(true); 
+  const [isRemoteMicOn, setIsRemoteMicOn] = useState(false); // Default false
   const [remoteTranscript, setRemoteTranscript] = useState("");
 
   const myVideo = useRef();
   const userVideo = useRef();
-  const connectionRef = useRef();
   const streamRef = useRef();
 
   // --- LOGIKA UTAMA (SAMA) ---
@@ -57,142 +65,131 @@ const RoomPage = () => {
   }, [transcript, role, socket, roomId]);
 
   useEffect(() => {
-    if (myVideo.current && stream) myVideo.current.srcObject = stream;
-  }, [isCameraOn, stream]);
+    if (aiFeedback && !aiFeedback.isCorrect) { setScore(s => ({ ...s, incorrect: s.incorrect + 1 })); }
+  }, [aiFeedback]);
 
+  // --- 🔥 LIVEKIT CONNECTION LOGIC (Mengganti WebRTC P2P) ---
   useEffect(() => {
-    if (socket) {
-      socket.on('sync_ayat_index', (newIndex) => {
+    const lkRoom = new Room();
+    lkRoomRef.current = lkRoom;
+
+    const setupLiveKit = async (user, room) => {
+      try {
+        // 1. Dapatkan Token dari Backend kita
+        const tokenResponse = await axios.get(
+          `${API_BASE_URL}/api/rooms/${roomId}/token`,
+          { headers: { Authorization: `Bearer ${await user.getIdToken()}` } }
+        );
+        const token = tokenResponse.data.token;
+
+        // 2. Dapatkan Media Stream (Kamera & Mic)
+        const localTracks = await createLocalTracks({ video: true, audio: true });
+        // Simpan stream di ref (Untuk SpeechRecognition dan Toggle)
+        streamRef.current = new MediaStream(localTracks.map(t => t.mediaStreamTrack)); 
+        
+        // Atur video lokal di UI
+        if (myVideo.current) myVideo.current.srcObject = streamRef.current;
+
+        // 3. Gabungkan Listeners (Soket + LiveKit)
+        setupSocketListeners();
+        
+        // 4. Connect ke LiveKit Server
+        await room.connect(LIVEKIT_URL, token);
+        setCallAccepted(true);
+
+        // 5. Publish Media
+        await room.localParticipant.publishTracks(localTracks);
+
+        // 6. Listener LiveKit (Update Remote Video/Audio)
+        room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+            // Hanya attach video dan update status mic/cam lawan
+            if (track instanceof VideoTrack) {
+                track.attach(userVideo.current);
+                setIsRemoteCameraOn(true);
+            }
+            if (track.kind === 'audio') setIsRemoteMicOn(true);
+        });
+        
+        room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+            // Update status lawan saat mereka unpublish
+            if (track.kind === 'video') setIsRemoteCameraOn(false);
+            if (track.kind === 'audio') setIsRemoteMicOn(false);
+        });
+
+      } catch (e) {
+        console.error('KONEKSI LIVEKIT GAGAL:', e);
+        socket.emit('room_error', 'Koneksi media gagal total. Cek log.');
+      }
+    };
+    
+    // Mulai koneksi setelah user dan socket siap
+    if (currentUser && socket && roomId && LIVEKIT_URL) {
+        setupLiveKit(currentUser, lkRoom);
+    }
+
+    return () => {
+        if (lkRoomRef.current) lkRoomRef.current.disconnect();
+    };
+  }, [currentUser, socket, roomId]);
+
+
+  // --- SOCKET LISTENERS (Sudah disederhanakan) ---
+  const setupSocketListeners = () => {
+    if (!socket) return;
+    
+    socket.off('remote_live_transcript'); 
+    socket.off('room_data'); socket.off('room_error');
+    socket.off('sync_ayat_index'); socket.off('sync_ayat_reveal');
+
+    // 1. Ambil Data Surah (tetap dikirim via Socket)
+    socket.on('room_data', (data) => {
+      setSurahData(data.fullAyatText);
+      setIsLoadingData(false);
+    });
+    socket.on('room_error', (msg) => { alert(msg); setIsLoadingData(false); });
+    socket.emit('join_room', roomId); // Kirim event join (LiveKit handle WebRTC)
+
+    // 2. Sync Ayat Index & Reveal (SAMA)
+    socket.on('sync_ayat_index', (newIndex) => {
         setCurrentIndex(newIndex);
         if (surahData.length > 0 && newIndex >= surahData.length) setIsFinished(true);
         else setIsFinished(false);
         setAiFeedback(null);
         if (role === 'user') resetTranscript();
       });
+    socket.on('sync_ayat_reveal', (status) => setIsAyatRevealed(status));
 
-      socket.on('sync_ayat_reveal', (status) => {
-        setIsAyatRevealed(status);
-      });
-
-      return () => {
-        socket.off('sync_ayat_index');
-        socket.off('sync_ayat_reveal');
-      };
-    }
-  }, [socket, role, resetTranscript, surahData]);
-
-  useEffect(() => {
-    if (aiFeedback && !aiFeedback.isCorrect) {
-      setScore(s => ({ ...s, incorrect: s.incorrect + 1 }));
-    }
-  }, [aiFeedback]);
-
-  // --- SETUP SOCKET & PEER (FIXED) ---
-  useEffect(() => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((currentStream) => {
-        setStream(currentStream);
-        streamRef.current = currentStream;
-        if (myVideo.current) myVideo.current.srcObject = currentStream;
-        setupSocketListeners(currentStream);
-      }).catch(err => console.error("Gagal akses kamera:", err));
-    
-    return () => { 
-      if (socket) { 
-        socket.off('user_joined'); socket.off('callUser'); socket.off('callAccepted'); 
-        socket.off('res_correction'); socket.off('remote_camera_status'); socket.off('remote_mic_status'); 
-        socket.off('sync_ayat_index'); socket.off('sync_ayat_reveal');
-        socket.off('room_data'); socket.off('room_error');
-      } 
-    };
-  }, [socket, roomId]);
-
-  const setupSocketListeners = (currentStream) => {
-    if (!socket) return;
-    
-    // Reset listeners
-    socket.off('user_joined'); socket.off('callUser'); socket.off('callAccepted'); 
-    socket.off('res_correction'); socket.off('remote_camera_status'); socket.off('remote_mic_status');
-    socket.off('sync_ayat_index'); socket.off('sync_ayat_reveal');
-    socket.off('room_data'); socket.off('room_error');
-
-    socket.on('room_data', (data) => {
-      setSurahData(data.fullAyatText);
-      setIsLoadingData(false);
-    });
-    socket.on('room_error', (msg) => { alert(msg); setIsLoadingData(false); });
-
-    // 🔥 FIX: JEDA 3 DETIK (3000ms) SEBELUM MENGIRIM 'join_room'
-    setTimeout(() => {
-        console.log("3 detik berlalu. Mengirim 'join_room'.");
-        socket.emit('join_room', roomId);
-        socket.emit('camera_status', { roomId, status: true });
-        socket.emit('mic_status', { roomId, status: true });
-    }, 3000); // 3 detik
-
-    // Listener WebRTC (Tanpa delay di sini)
-    socket.on('user_joined', (userId) => callUser(userId, currentStream));
-    socket.on("callUser", (data) => answerCall(data, currentStream));
-    
-    socket.on("callAccepted", (signal) => { setCallAccepted(true); connectionRef.current.signal(signal); });
-    socket.on('res_correction', (data) => { setAiFeedback(data); setIsProcessing(false); });
+    // LiveKit sudah handle signaling, ini hanya untuk status display
     socket.on('remote_camera_status', ({ status }) => setIsRemoteCameraOn(status));
     socket.on('remote_mic_status', ({ status }) => setIsRemoteMicOn(status));
-    socket.on('admin_toggle_reveal', (status) => setIsAyatRevealed(status));
   };
 
 
-  // --- 🔥 FIX UTAMA: callUser (Anti Race Condition - Manual Track) ---
-  const callUser = (id, stream) => {
-    if (connectionRef.current && connectionRef.current.connected) return;
-
-    // 1. Buat peer KOSONGAN (tanpa stream di constructor)
-    const peer = new Peer({ initiator: true, trickle: false });
-
-    // 2. Tambahkan track secara manual (memastikan stream sudah siap)
-    stream.getTracks().forEach(track => {
-      peer.addTrack(track, stream);
-    });
-
-    // 3. Sisanya sama
-    peer.on("signal", data => socket.emit("callUser", { userToCall: id, signalData: data, from: me }));
-    peer.on("stream", remote => { if (userVideo.current) userVideo.current.srcObject = remote; setIsRemoteCameraOn(true); setIsRemoteMicOn(true); });
-    socket.on("callAccepted", signal => { setCallAccepted(true); peer.signal(signal); });
-    connectionRef.current = peer;
-  };
-
-  // --- 🔥 FIX UTAMA: answerCall (Anti Race Condition - Manual Track) ---
-  const answerCall = (data, stream) => {
-    if (connectionRef.current && connectionRef.current.connected) return;
-    setCallAccepted(true);
-    
-    // 1. Buat peer KOSONGAN (tanpa stream di constructor)
-    const peer = new Peer({ initiator: false, trickle: false });
-
-    // 2. Tambahkan track secara manual
-    stream.getTracks().forEach(track => {
-      peer.addTrack(track, stream);
-    });
-    
-    // 3. Sisanya sama
-    peer.on("signal", signal => socket.emit("answerCall", { signal, to: data.from }));
-    peer.on("stream", remote => { if (userVideo.current) userVideo.current.srcObject = remote; setIsRemoteCameraOn(true); setIsRemoteMicOn(true); });
-    peer.signal(data.signal);
-    connectionRef.current = peer;
-  };
-
-  // --- TOGGLES & KOREKSI (SAMA) ---
+  // --- TOGGLES (DIUBAH KE LIVEKIT SDK) ---
   const toggleCamera = () => {
-    if (streamRef.current) {
-      const videoTrack = streamRef.current.getVideoTracks()[0];
-      if (videoTrack) { videoTrack.enabled = !videoTrack.enabled; setIsCameraOn(videoTrack.enabled); socket.emit('camera_status', { roomId, status: videoTrack.enabled }); }
+    const room = lkRoomRef.current;
+    if (room && room.localParticipant) {
+        const newState = !isCameraOn;
+        // Gunakan LiveKit SDK untuk mematikan/menyalakan kamera
+        room.localParticipant.setCameraEnabled(newState);
+        setIsCameraOn(newState);
+        // Tetap kirim signal via socket agar lawan bisa update UI
+        socket.emit('camera_status', { roomId, status: newState });
     }
   };
+
   const toggleMic = () => {
-    if (streamRef.current) {
-      const audioTrack = streamRef.current.getAudioTracks()[0];
-      if (audioTrack) { audioTrack.enabled = !audioTrack.enabled; setIsMicOn(audioTrack.enabled); socket.emit('mic_status', { roomId, status: audioTrack.enabled }); }
+    const room = lkRoomRef.current;
+    if (room && room.localParticipant) {
+        const newState = !isMicOn;
+        // Gunakan LiveKit SDK untuk mematikan/menyalakan mic
+        room.localParticipant.setMicrophoneEnabled(newState);
+        setIsMicOn(newState);
+        socket.emit('mic_status', { roomId, status: newState });
     }
   };
+
+  // --- KOREKSI & NAVIGASI (SAMA) ---
   const handleKoreksi = (textOverride) => {
     if (role !== 'user') return;
     const textToSend = (typeof textOverride === 'string' && textOverride) ? textOverride : transcript;
@@ -211,7 +208,7 @@ const RoomPage = () => {
     if (newIndex >= surahData.length) newIndex = surahData.length; 
     if (direction > 0 && newIndex <= surahData.length) {
       setScore(s => ({ ...s, correct: s.correct + 1 }));
-      if(aiFeedback && !aiFeedback.isCorrect) { setScore(s => ({ ...s, incorrect: Math.max(0, s.incorrect - 1) })); }
+      if(aiFeedback && !aiFeedback.isCorrect) setScore(s => ({ ...s, incorrect: Math.max(0, s.incorrect - 1) }));
     }
     socket.emit('admin_change_ayat', { roomId, newIndex });
   };
@@ -230,9 +227,8 @@ const RoomPage = () => {
     socket.emit('admin_toggle_reveal', { roomId, isRevealed: newState });
   };
 
-
   // --- RENDER ---
-  if (isLoadingData) {
+  if (isLoadingData || !currentUser) { // Tambahkan cek currentUser
     return <div className="discord-container" style={{justifyContent:'center', alignItems:'center', color:'white'}}><Loader2 className="animate-spin" size={48} /><h2 style={{color: '#949ba4', marginTop: 20}}>Menghubungkan...</h2></div>;
   }
 
@@ -242,6 +238,7 @@ const RoomPage = () => {
       {/* STREAM AREA */}
       <div className="stream-area">
         <div className="video-grid">
+          {/* Video Lawan */}
           <div className="video-wrapper">
             <video playsInline ref={userVideo} autoPlay style={{ opacity: (callAccepted && isRemoteCameraOn) ? 1 : 0 }} />
             <div className="discord-avatar" style={{ opacity: (callAccepted && isRemoteCameraOn) ? 0 : 1, zIndex: (callAccepted && isRemoteCameraOn) ? -1 : 5 }}>
@@ -251,6 +248,7 @@ const RoomPage = () => {
             <div className="user-tag">{role === 'admin' ? "Santri" : "Ustadz"}</div>
             {callAccepted && !isRemoteMicOn && (<div className="mute-indicator" style={{background:'#da373c'}}><MicOff size={20} color="white" /></div>)}
           </div>
+          {/* Video Saya */}
           <div className="video-wrapper">
             <video playsInline muted ref={myVideo} autoPlay style={{ transform:'scaleX(-1)', opacity: isCameraOn ? 1 : 0 }} />
             <div className="discord-avatar" style={{ opacity: isCameraOn ? 0 : 1, zIndex: isCameraOn ? -1 : 5 }}>
@@ -306,25 +304,8 @@ const RoomPage = () => {
             </div>
           )}
           <div style={{textAlign:'center', margin:'10px 0', color:'#585b60', fontSize:'12px', fontWeight:'bold'}}>AI Assistant</div>
-          {isProcessing && (
-            <div className="chat-bubble">
-              <div className="bot-avatar"><Activity size={16} color="white"/></div>
-              <div className="chat-content">
-                 <div className="chat-user">AI Assistant <span className="room-pill">BOT</span></div>
-                 <div className="chat-text" style={{fontStyle:'italic'}}>Menganalisa...</div>
-              </div>
-            </div>
-          )}
-          {aiFeedback && (
-            <div className="chat-bubble">
-               <div className="bot-avatar" style={{background: aiFeedback.isCorrect ? '#23a559' : '#da373c'}}><Bot size={16} color="white"/></div>
-               <div className="chat-content">
-                  <div className="chat-user">AI Assistant <span className="room-pill">BOT</span></div>
-                  <div className="chat-text" style={{color: 'white', fontWeight:'bold', fontSize: '13px'}}>{aiFeedback.adminMessage}</div>
-                  {aiFeedback.santriGuidance && (<div className="chat-text" style={{background:'#1e1f22', padding:'8px', borderRadius:'4px', fontSize:'12px', fontFamily:'monospace'}}>Saran Santri: "{aiFeedback.santriGuidance}"</div>)}
-               </div>
-            </div>
-          )}
+          {isProcessing && (<div className="chat-bubble"><div className="bot-avatar"><Activity size={16} color="white"/></div><div className="chat-content"><div className="chat-user">AI Assistant <span className="room-pill">BOT</span></div><div className="chat-text" style={{fontStyle:'italic'}}>Menganalisa...</div></div></div>)}
+          {aiFeedback && (<div className="chat-bubble"><div className="bot-avatar" style={{background: aiFeedback.isCorrect ? '#23a559' : '#da373c'}}><Bot size={16} color="white"/></div><div className="chat-content"><div className="chat-user">AI Assistant <span className="room-pill">BOT</span></div><div className="chat-text" style={{color: 'white', fontWeight:'bold', fontSize: '13px'}}>{aiFeedback.adminMessage}</div>{aiFeedback.santriGuidance && (<div className="chat-text" style={{background:'#1e1f22', padding:'8px', borderRadius:'4px', fontSize:'12px', fontFamily:'monospace'}}>Saran Santri: "{aiFeedback.santriGuidance}"</div>)}</div></div>)}
         </div>
         <div className="input-area">
            {role === 'user' ? (

@@ -3,14 +3,13 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { SocketContext } from '../context/SocketContext';
 import { useAuth } from '../context/AuthContext';
-// 🔥 FIX: IMPORT AUTH DARI FIREBASE
 import { auth } from '../firebase'; 
 import { Room, RoomEvent, createLocalTracks, VideoTrack } from 'livekit-client'; 
 import axios from 'axios';
 import { Mic, MicOff, Video, VideoOff, Send, Hash, User, Activity, Bot, ShieldAlert, ChevronLeft, ChevronRight, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'; 
 import './RoomPage.css';
 
-const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || 'wss://localhost:7880';
+const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || 'wss://murojaah-production.up.railway.app';
 const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, ""); 
 
 
@@ -48,7 +47,6 @@ const RoomPage = () => {
   const userVideo = useRef();
   const streamRef = useRef();
 
-  // --- LOGIKA EFEK SAMPING (SAMA) ---
   useEffect(() => {
     if (role === 'user' && listening && transcript && !isProcessing) {
       const silenceTimer = setTimeout(() => handleKoreksi(transcript), 1500); 

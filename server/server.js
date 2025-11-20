@@ -6,7 +6,7 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const CorrectionLog = require('./models/CorrectionLog');
 const Room = require('./models/Room'); // Import Room model
-const { koreksiHafalan } = require('./services/aiService'); // Import AI Service
+// 🔥 HAPUS IMPORT DI SINI: const { koreksiHafalan } = require('./services/aiService'); 
 
 // Initialize DB
 connectDB();
@@ -15,7 +15,6 @@ const app = express();
 const server = http.createServer(app);
 
 // --- 1. MIDDLEWARE (CORS, JSON) ---
-// Perlu diset sebelum routes
 const allowedOrigins = [ 'http://localhost:5173', process.env.FRONTEND_URL ];
 const corsOptions = {
   origin: function (origin, callback) {
@@ -85,6 +84,8 @@ io.on('connection', (socket) => {
 
   // 6. Koreksi AI (req_correction)
   socket.on('req_correction', async (data) => {
+    // 🔥 FIX: Pindahkan require AI ke dalam sini (Lazy Load)
+    const { koreksiHafalan } = require('./services/aiService');
     const { roomId, userId, userText, targetAyatText, expectedAyatIndex } = data;
     
     try {
